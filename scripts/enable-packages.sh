@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Required core: target profile and LuCI must resolve. Optional packages are
-# attempted and reported rather than making the whole firmware fail if a feed
-# package was renamed/removed on the current upstream branch.
+# OpenWrt normalizes device names in Kconfig symbols: hyphens become underscores.
+TARGET_PROFILE_SYMBOL='CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg_040g_md_ubi'
+
+# Expand the short config.seed first so Kconfig can resolve the selected device.
+make defconfig
+grep -qx "${TARGET_PROFILE_SYMBOL}=y" .config || {
+  echo "::error::Nokia XG-040G-MD UBI target profile is not selected after make defconfig."
+  echo "::error::Expected: ${TARGET_PROFILE_SYMBOL}=y"
+  grep -E '^CONFIG_TARGET_(airoha|DEVICE_airoha_an7581)' .config || true
+  exit 1
+}
+
+# Optional packages are attempted and reported rather than making the whole
+# firmware fail if a feed package was renamed/removed on the current branch.
 OPTIONAL_PACKAGES=(
   luci-app-openclash
   luci-app-passwall2
@@ -51,14 +62,17 @@ OPTIONAL_PACKAGES=(
   wpad-mbedtls
 )
 
-grep -q '^CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg-040g-md-ubi=y$' .config || {
-  echo "::error::Nokia XG-040G-MD UBI target profile is not selected."
-  exit 1
-}
 for pkg in "${OPTIONAL_PACKAGES[@]}"; do
   printf 'CONFIG_PACKAGE_%s=y\n' "$pkg" >> .config
 done
 make defconfig
+
+# Re-check after Kconfig normalization to ensure the intended UBI device remains selected.
+grep -qx "${TARGET_PROFILE_SYMBOL}=y" .config || {
+  echo "::error::Nokia XG-040G-MD UBI target profile was dropped by make defconfig."
+  grep -E '^CONFIG_TARGET_(airoha|DEVICE_airoha_an7581)' .config || true
+  exit 1
+}
 
 mkdir -p "$GITHUB_WORKSPACE/output"
 report="$GITHUB_WORKSPACE/output/package-availability.txt"
