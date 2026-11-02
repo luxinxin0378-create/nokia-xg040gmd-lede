@@ -140,9 +140,19 @@ jobs:
             echo 'CONFIG_PACKAGE_luci-app-airoha-npu=y'
           } >> .config
           make defconfig
+          # The target profile is mandatory. Optional LuCI apps may be dropped by
+          # PonWrt Kconfig when a dependency is unavailable; report rather than abort.
           grep -qx 'CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg-040g-md-ubi=y' .config
-          grep -qx 'CONFIG_PACKAGE_luci-app-cpufreq=y' .config
-          grep -qx 'CONFIG_PACKAGE_luci-app-airoha-npu=y' .config
+          {
+            echo "CPU package resolution after defconfig:"
+            for pkg in luci-app-cpufreq luci-app-airoha-npu; do
+              if grep -qx "CONFIG_PACKAGE_${pkg}=y" .config; then
+                echo "ENABLED ${pkg}"
+              else
+                echo "NOT_SELECTED_BY_KCONFIG ${pkg}"
+              fi
+            done
+          } > "$GITHUB_WORKSPACE/output/cpu-package-availability.txt"
 
           mkdir -p files/etc/uci-defaults
           cat > files/etc/uci-defaults/99-cpufreq-schedutil <<'EOF'
@@ -160,7 +170,52 @@ jobs:
           chmod 0755 files/etc/uci-defaults/99-cpufreq-schedutil
           {
             echo "CPU apps:"
-            grep -E '^CONFIG_PACKAGE_luci-app-(cpufreq|airoha-npu)=y$' .config
+            grep -E '^CONFIG_PACKAGE_luci-app-(cpufreq|airoha-npu)=y
+            echo "Direct PLL overclock RPC: disabled"
+          } > "$GITHUB_WORKSPACE/output/cpu-management-audit.txt"
+          cp .config "$GITHUB_WORKSPACE/output/build.config.resolved"
+
+      - name: Download sources
+        working-directory: openwrt
+        run: make download -j8
+
+      - name: Compile PonWrt firmware
+        working-directory: openwrt
+        env:
+          BUILD_JOBS: ${{ inputs.jobs || '2' }}
+        run: make -j"${BUILD_JOBS}" V=s
+
+      - name: Collect Nokia XG-040G-MD UBI images and reports
+        if: success()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          find openwrt/bin/targets/airoha/an7581 -maxdepth 1 -type f \
+            \( -iname '*nokia_xg-040g-md-ubi*' -o -iname '*nokia_xg-040g-md*manifest' \) \
+            -exec cp -v {} "$GITHUB_WORKSPACE/output/" \;
+          cp openwrt/.config "$GITHUB_WORKSPACE/output/build.config"
+          cp openwrt/feeds.conf.default "$GITHUB_WORKSPACE/output/feeds.conf.default"
+          test -n "$(find "$GITHUB_WORKSPACE/output" -maxdepth 1 -type f -iname '*nokia_xg-040g-md-ubi*' -print -quit)"
+
+      - name: Upload firmware artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ponwrt-nokia-xg040gmd-ubi
+          path: output/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ponwrt-nokia-xg040gmd-build-diagnostics
+          path: |
+            openwrt/.config
+            openwrt/logs/**
+          if-no-files-found: ignore
+          retention-days: 7
+ .config || true
             echo "Governor: schedutil only when available"
             echo "Direct PLL overclock RPC: disabled"
           } > "$GITHUB_WORKSPACE/output/cpu-management-audit.txt"
