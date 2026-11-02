@@ -1,0 +1,127 @@
+name: Nokia XG-040G-MD Custom Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Nokia device profile"
+        required: true
+        type: choice
+        options:
+          - nokia_xg-040g-md-ubi
+        default: nokia_xg-040g-md-ubi
+      jobs:
+        description: "Parallel compile jobs (2 is safest)"
+        required: true
+        type: choice
+        options: ["2", "3", "4"]
+        default: "2"
+  push:
+    paths:
+      - ".github/workflows/build.yml"
+      - "feeds.conf.add"
+      - "scripts/**"
+      - "README.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nokia-xg040gmd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout build overlay
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint \
+            binutils bison build-essential bzip2 ccache clang cmake cpio curl \
+            device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
+            g++-multilib git gnutls-dev gperf haveged help2man intltool \
+            lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm \
+            lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf \
+            python3 python3-pip python3-ply python3-docutils python3-pyelftools \
+            qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo \
+            uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+
+      - name: Clone and verify LEDE source
+        run: |
+          git clone --depth=1 https://github.com/coolsnowwolf/lede.git openwrt
+          cd openwrt
+          cp "$GITHUB_WORKSPACE/config.seed" .config
+          cat "$GITHUB_WORKSPACE/feeds.conf.add" >> feeds.conf.default
+          grep -q 'Device/nokia_xg-040g-md-ubi' target/linux/airoha/image/an7581.mk
+          echo "Verified Nokia XG-040G-MD UBI device profile."
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          {
+            echo "Source: https://github.com/coolsnowwolf/lede"
+            echo "Target: airoha/an7581"
+            echo "Profile: nokia_xg-040g-md-ubi"
+            if grep -RqiE 'FM25G02B|Fudan Micro' target/linux/airoha package/boot 2>/dev/null; then
+              echo "Fudan NAND string found; implementation still requires manual validation."
+            else
+              echo "WARNING: Fudan FM25G02B boot-chain support not verified in this source."
+            fi
+          } > "$GITHUB_WORKSPACE/output/nand-support-audit.txt"
+
+      - name: Update and install feeds
+        working-directory: openwrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Select available packages
+        working-directory: openwrt
+        run: |
+          chmod +x "$GITHUB_WORKSPACE/scripts/enable-packages.sh"
+          "$GITHUB_WORKSPACE/scripts/enable-packages.sh"
+
+      - name: Download sources
+        working-directory: openwrt
+        run: make download -j8
+
+      - name: Compile firmware
+        working-directory: openwrt
+        env:
+          BUILD_JOBS: ${{ inputs.jobs || '2' }}
+        run: make -j"${BUILD_JOBS}" V=s
+
+      - name: Collect firmware and reports
+        if: success()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          find openwrt/bin/targets/airoha/an7581 -maxdepth 1 -type f \
+            \( -iname '*nokia_xg-040g-md-ubi*' -o -iname '*nokia_xg-040g-md*manifest' \) \
+            -exec cp -v {} "$GITHUB_WORKSPACE/output/" \;
+          cp openwrt/.config "$GITHUB_WORKSPACE/output/build.config"
+          cp openwrt/feeds.conf.default "$GITHUB_WORKSPACE/output/feeds.conf.default"
+          test -n "$(find "$GITHUB_WORKSPACE/output" -maxdepth 1 -type f -name '*nokia_xg-040g-md-ubi*' -print -quit)"
+
+      - name: Upload firmware artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nokia-xg040gmd-ubi-firmware
+          path: output/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nokia-xg040gmd-build-diagnostics
+          path: |
+            openwrt/.config
+            openwrt/logs/**
+          if-no-files-found: ignore
+          retention-days: 7
