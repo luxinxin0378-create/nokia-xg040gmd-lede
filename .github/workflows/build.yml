@@ -86,6 +86,67 @@ jobs:
           chmod +x "$GITHUB_WORKSPACE/scripts/enable-packages.sh"
           "$GITHUB_WORKSPACE/scripts/enable-packages.sh"
 
+      - name: Add CPU management LuCI applications (pinned sources)
+        working-directory: openwrt
+        run: |
+          git clone https://github.com/openwrt-xiaomi/luci-app-cpufreq.git package/luci-app-cpufreq
+          git -C package/luci-app-cpufreq checkout 7910f1ff8d964d8bc168d9559034adbbac5b3729
+
+          git clone https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
+          git -C package/luci-app-airoha-npu checkout 14521b8414da1e98517a295d8ec267087c7dde8e
+
+          # Hard-disable the upstream direct PLL write RPC. Keep governor and
+          # OPP frequency-limit controls; never enable /dev/mem or busybox devmem.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("package/luci-app-airoha-npu/root/usr/libexec/rpcd/luci.airoha_npu")
+          s = p.read_text()
+          start = s.index("set_overclock() {")
+          end = s.index("\\n}\\n", start) + 3
+          replacement = """set_overclock() {
+          \techo '{"error":"PLL overclock is disabled by firmware build policy"}'
+          }
+          """
+          s = s[:start] + replacement + s[end:]
+          if 'configure_armpll "$soc"' in s[start:start + len(replacement)]:
+              raise SystemExit("PLL write path was not removed")
+          p.write_text(s)
+          PY
+
+      - name: Enable CPU apps and set dynamic governor default
+        working-directory: openwrt
+        run: |
+          {
+            echo 'CONFIG_PACKAGE_luci-app-cpufreq=y'
+            echo 'CONFIG_PACKAGE_luci-app-airoha-npu=y'
+          } >> .config
+          make defconfig
+          grep -qx 'CONFIG_PACKAGE_luci-app-cpufreq=y' .config
+          grep -qx 'CONFIG_PACKAGE_luci-app-airoha-npu=y' .config
+
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/99-cpufreq-schedutil <<'EOF'
+          #!/bin/sh
+          # Prefer the scheduler-driven governor; do not force a fixed CPU clock.
+          p=/sys/devices/system/cpu/cpufreq/policy0
+          [ -w "$p/scaling_governor" ] || exit 0
+          avail="$(cat "$p/scaling_available_governors" 2>/dev/null)"
+          case " $avail " in
+            *" schedutil "*) echo schedutil > "$p/scaling_governor" ;;
+            *) logger -t cpufreq-default "schedutil unavailable; keeping kernel default governor" ;;
+          esac
+          exit 0
+          EOF
+          chmod 0755 files/etc/uci-defaults/99-cpufreq-schedutil
+
+          {
+            echo "CPU apps:"
+            grep -E '^CONFIG_PACKAGE_luci-app-(cpufreq|airoha-npu)=y$' .config
+            echo "Default governor: schedutil when available"
+            echo "PLL overclock RPC: disabled"
+          } >> "$GITHUB_WORKSPACE/output/cpu-management-audit.txt"
+          cp .config "$GITHUB_WORKSPACE/output/build.config.cpu"
+
       - name: Download sources
         working-directory: openwrt
         run: make download -j8
