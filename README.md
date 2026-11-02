@@ -24,3 +24,8 @@ SkyHigh S35ML02G300 与 Fudan FM25G02B 不能仅凭型号名称认定可共用�
 刷机前必须对本机全闪存备份并校验，尤其保留 `bosa`、`ri` 等设备身份/校准数据；严禁使用其他设备的分区备份。不要把 recovery、bootloader 文件当作普通 sysupgrade 镜像。
 
 QModem 仓库许可证可能限制商业用途；集成和再发布前请自行核对完整许可证。QModem 不能替代内核驱动。
+
+
+## Build trigger
+
+提交此文件会触发 GitHub Actions 自动编译。
