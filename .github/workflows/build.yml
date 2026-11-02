@@ -170,7 +170,7 @@ jobs:
           chmod 0755 files/etc/uci-defaults/99-cpufreq-schedutil
           {
             echo "CPU apps:"
-            grep -E '^CONFIG_PACKAGE_luci-app-(cpufreq|airoha-npu)=y
+            grep '^CONFIG_PACKAGE_luci-app-' .config | grep -E 'cpufreq|airoha-npu' || true
             echo "Direct PLL overclock RPC: disabled"
           } > "$GITHUB_WORKSPACE/output/cpu-management-audit.txt"
           cp .config "$GITHUB_WORKSPACE/output/build.config.resolved"
