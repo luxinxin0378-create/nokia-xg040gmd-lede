@@ -125,7 +125,7 @@ jobs:
           p = Path("package/luci-app-airoha-npu/root/usr/libexec/rpcd/luci.airoha_npu")
           s = p.read_text()
           start = s.index("set_overclock() {")
-          end = s.index("\\n}\\n", start) + 3
+          end = s.index("\n}\n", start) + 3
           replacement = """set_overclock() {
           \techo '{"error":"PLL overclock is disabled by firmware build policy"}'
           }
