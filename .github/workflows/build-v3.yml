@@ -121,7 +121,10 @@ jobs:
 
           # Keep manual PLL overclock controls available in LuCI; do not auto-apply on boot.
           # Align package visibility with the AN7581 subtarget so Kconfig retains the NPU page.
-          sed -i 's/@TARGET_airoha$/@TARGET_airoha_an7581/' package/luci-app-airoha-npu/Makefile
+          # This workflow is already pinned to the AN7581 target. Drop the
+          # broad target dependency that Kconfig may resolve against the parent
+          # Airoha symbol and inadvertently deselect the app package.
+          sed -i 's/ @TARGET_airoha\\b//' package/luci-app-airoha-npu/Makefile
           {
             echo 'CONFIG_PACKAGE_luci-app-cpufreq=y'
             echo 'CONFIG_PACKAGE_luci-app-airoha-npu=y'
