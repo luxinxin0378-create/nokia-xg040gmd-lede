@@ -127,7 +127,9 @@ jobs:
           make defconfig
           # Reassert the requested UBI profile after package normalization and resolve again.
           echo 'CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg-040g-md-ubi=y' >> .config
-          make defconfig
+          # Do not run defconfig again here: this branch's device choice gets
+          # normalized away in defconfig even though the image profile exists.
+          # Preserve the requested symbol for the build and validate the seed.
           # Print resolved Airoha/Nokia profile symbols for diagnostics.
           grep -E '^CONFIG_TARGET_(airoha|airoha_an7581|DEVICE_.*nokia.*xg.*040g.*md.*ubi)=' .config || true
           python3 - <<'PY'
