@@ -79,7 +79,6 @@ jobs:
               lines.insert(end, "\\tDEVICE_PACKAGES += airoha-an7583-npu-firmware\\n")
               p.write_text("".join(lines))
           PY
-          PY
           # The base AN7583 DTS disables NPU by default; enable it for MF UBI only.
           if ! grep -q '&npu' "$DTS"; then
             cat >> "$DTS" <<'EOF'
