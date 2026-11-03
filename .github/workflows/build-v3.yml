@@ -124,7 +124,144 @@ jobs:
           # This workflow is already pinned to the AN7581 target. Drop the
           # broad target dependency that Kconfig may resolve against the parent
           # Airoha symbol and inadvertently deselect the app package.
-          sed -i 's/ @TARGET_airoha\\b//' package/luci-app-airoha-npu/Makefile
+          sed -i 's/@TARGET_airoha//g' package/luci-app-airoha-npu/Makefile
+          grep -q '^LUCI_DEPENDS:=+luci-base
+          {
+            echo 'CONFIG_PACKAGE_luci-app-cpufreq=y'
+            echo 'CONFIG_PACKAGE_luci-app-airoha-npu=y'
+          } >> .config
+          make defconfig
+          # The target profile and the NPU LuCI page are required for this build.
+          grep -qx 'CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg-040g-md-ubi=y' .config
+          grep -qx 'CONFIG_PACKAGE_luci-app-airoha-npu=y' .config || {
+            echo "::error::luci-app-airoha-npu was dropped by Kconfig; refusing to publish an image without the NPU page."
+            exit 1
+          }
+          test -f package/luci-app-airoha-npu/root/usr/share/luci/menu.d/luci-app-airoha-npu.json
+          test -f package/luci-app-airoha-npu/htdocs/luci-static/resources/view/airoha_npu/status.js
+          grep -q '"admin/status/npu"' package/luci-app-airoha-npu/root/usr/share/luci/menu.d/luci-app-airoha-npu.json
+          grep -q '"path": "airoha_npu/status"' package/luci-app-airoha-npu/root/usr/share/luci/menu.d/luci-app-airoha-npu.json
+          {
+            echo "CPU package resolution after defconfig:"
+            for pkg in luci-app-cpufreq luci-app-airoha-npu; do
+              if grep -qx "CONFIG_PACKAGE_${pkg}=y" .config; then
+                echo "ENABLED ${pkg}"
+              else
+                echo "NOT_SELECTED_BY_KCONFIG ${pkg}"
+              fi
+            done
+            echo "NPU LuCI menu and status view source: verified"
+          } > "$GITHUB_WORKSPACE/output/cpu-package-availability.txt"
+
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/99-cpufreq-schedutil <<'EOF'
+          #!/bin/sh
+          # Prefer schedutil when supported; do not pin CPU frequency.
+          p=/sys/devices/system/cpu/cpufreq/policy0
+          [ -w "$p/scaling_governor" ] || exit 0
+          avail="$(cat "$p/scaling_available_governors" 2>/dev/null)"
+          case " $avail " in
+            *" schedutil "*) echo schedutil > "$p/scaling_governor" ;;
+            *) logger -t cpufreq-default "schedutil unavailable; keep kernel default" ;;
+          esac
+          exit 0
+          EOF
+          chmod 0755 files/etc/uci-defaults/99-cpufreq-schedutil
+          {
+            echo "CPU apps:"
+            grep '^CONFIG_PACKAGE_luci-app-' .config | grep -E 'cpufreq|airoha-npu' || true
+            echo "Direct PLL overclock RPC: retained (manual control; no boot auto-overclock)"
+          } > "$GITHUB_WORKSPACE/output/cpu-management-audit.txt"
+          cp .config "$GITHUB_WORKSPACE/output/build.config.resolved"
+
+
+      - name: Enable AN7581 hardware NPU and include firmware
+        working-directory: openwrt
+        run: |
+          set -eu
+          DTS=target/linux/airoha/dts/an7581-nokia_xg-040g-md-ubi.dts
+          PROFILE=target/linux/airoha/image/an7581.mk
+          test -f "$DTS"
+          test -f "$PROFILE"
+          grep -Rqs 'CONFIG_NET_AIROHA_NPU=y' target/linux/airoha
+          grep -Rqs 'compatible = "airoha,en7581-npu"' target/linux/airoha/dts
+          # Activate the NPU node only once.
+          if ! grep -Eq '&npu[[:space:]]*\{|status = "okay";' "$DTS"; then
+            printf '\n&npu {\n\tstatus = "okay";\n};\n' >> "$DTS"
+          elif ! grep -q '&npu' "$DTS"; then
+            printf '\n&npu {\n\tstatus = "okay";\n};\n' >> "$DTS"
+          fi
+          grep -Rqs 'airoha-en7581-npu-firmware' package/firmware/linux-firmware
+          python3 - "$PROFILE" <<'PY'
+          from pathlib import Path
+          import sys
+          p = Path(sys.argv[1])
+          lines = p.read_text().splitlines(keepends=True)
+          start = next((i for i, line in enumerate(lines)
+                        if line.startswith("define Device/nokia_xg-040g-md-common")), None)
+          if start is None:
+              raise SystemExit("Nokia MD common profile not found")
+          end = next((i for i in range(start + 1, len(lines))
+                      if lines[i].strip() == "endef"), None)
+          if end is None:
+              raise SystemExit("Nokia MD profile endef not found")
+          block = "".join(lines[start:end])
+          if "airoha-en7581-npu-firmware" not in block:
+              lines.insert(end, "\tDEVICE_PACKAGES += airoha-en7581-npu-firmware\n")
+              p.write_text("".join(lines))
+          PY
+          grep -q '&npu' "$DTS"
+          grep -q 'status = "okay";' "$DTS"
+          grep -q 'airoha-en7581-npu-firmware' "$PROFILE"
+          {
+            echo "AN7581 NPU kernel config: checked"
+            echo "Nokia MD NPU DTS: enabled"
+            echo "NPU firmware package: included in profile"
+          } > "$GITHUB_WORKSPACE/output/npu-hardware-audit.txt"
+
+      - name: Download sources
+        working-directory: openwrt
+        run: make download -j8
+
+      - name: Compile PonWrt firmware
+        working-directory: openwrt
+        env:
+          BUILD_JOBS: ${{ inputs.jobs || '2' }}
+        run: make -j"${BUILD_JOBS}" V=s
+
+      - name: Collect Nokia XG-040G-MD v3 NPU UBI images and reports
+        if: success()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          find openwrt/bin/targets/airoha/an7581 -maxdepth 1 -type f \
+            \( -iname '*nokia_xg-040g-md-ubi*' -o -iname '*nokia_xg-040g-md*manifest' \) \
+            -exec cp -v {} "$GITHUB_WORKSPACE/output/" \;
+          cp openwrt/.config "$GITHUB_WORKSPACE/output/build.config"
+          cp openwrt/feeds.conf.default "$GITHUB_WORKSPACE/output/feeds.conf.default"
+          test -n "$(find "$GITHUB_WORKSPACE/output" -maxdepth 1 -type f -iname '*nokia_xg-040g-md-ubi*' -print -quit)"
+
+      - name: Upload firmware artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ponwrt-nokia-xg040gmd-v3-npu-ubi
+          path: output/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ponwrt-nokia-xg040gmd-v3-npu-build-diagnostics
+          path: |
+            openwrt/.config
+            openwrt/logs/**
+          if-no-files-found: ignore
+          retention-days: 7
+ package/luci-app-airoha-npu/Makefile || {
+            echo '::error::Failed to remove NPU LuCI target gate'; exit 1;
+          }
           {
             echo 'CONFIG_PACKAGE_luci-app-cpufreq=y'
             echo 'CONFIG_PACKAGE_luci-app-airoha-npu=y'
