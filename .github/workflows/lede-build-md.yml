@@ -53,6 +53,21 @@ jobs:
           cat "$GITHUB_WORKSPACE/lede-feeds.conf" >> feeds.conf.default
           grep -q 'Device/nokia_xg-040g-md-ubi' target/linux/airoha/image/an7581.mk
           test -f target/linux/airoha/dts/an7581-nokia_xg-040g-md-ubi.dts
+          # The AN7581 NPU driver and firmware are provided by the target, but
+          # the generic SoC DTS leaves the NPU node disabled. Enable only the
+          # NPU binary-memory region on this non-Wi-Fi-offload Nokia MD board.
+          MD_COMMON_DTS=target/linux/airoha/dts/an7581-nokia_xg-040g-md-common.dtsi
+          grep -q 'an7581.dtsi' "$MD_COMMON_DTS"
+          if ! grep -Eq '^&npu[[:space:]]*\{' "$MD_COMMON_DTS"; then
+            cat >> "$MD_COMMON_DTS" <<'EOF'
+
+          /* Enable AN7581 NPU firmware/flow offload on Nokia XG-040G-MD. */
+          &npu {
+            status = "okay";
+          };
+          EOF
+          fi
+          grep -A2 '^&npu' "$MD_COMMON_DTS"
           mkdir -p "$GITHUB_WORKSPACE/output"
           {
             echo "Source: https://github.com/coolsnowwolf/lede"
