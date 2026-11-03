@@ -156,6 +156,25 @@ jobs:
             done
           } > "$GITHUB_WORKSPACE/output/package-availability.txt"
 
+      - name: Add Airoha NPU LuCI management interface
+        working-directory: openwrt
+        run: |
+          # Dashboard supports AN7581 and AN7583 NPU/engine telemetry.
+          git clone --depth=1 https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
+          test -f package/luci-app-airoha-npu/Makefile
+          {
+            echo 'CONFIG_PACKAGE_luci-app-airoha-npu=y'
+          } >> .config
+          make defconfig
+          grep -qx 'CONFIG_TARGET_DEVICE_airoha_an7583_DEVICE_nokia_xg-040g-mf-ubi=y' .config
+          {
+            if grep -qx 'CONFIG_PACKAGE_luci-app-airoha-npu=y' .config; then
+              echo 'NPU LuCI dashboard: ENABLED'
+            else
+              echo 'NPU LuCI dashboard: NOT_SELECTED_BY_KCONFIG'
+            fi
+          } > "$GITHUB_WORKSPACE/output/npu-ui-audit.txt"
+
       - name: Add CPU management LuCI applications (pinned sources)
         working-directory: openwrt
         run: |
