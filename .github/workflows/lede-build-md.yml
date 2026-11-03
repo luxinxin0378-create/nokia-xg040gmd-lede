@@ -213,7 +213,7 @@ jobs:
           p = Path("package/wwan/driver/quectel_QMI_WWAN/src/qmi_wwan_q.c")
           s = p.read_text()
           old = "\thrtimer_init(&priv->agg_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);\n\tpriv->agg_hrtimer.function = rmnet_usb_tx_agg_timer_cb;"
-          new = "\thrtimer_setup(&priv->agg_hrtimer, rmnet_usb_tx_agg_timer_cb, HRTIMER_MODE_REL);"
+          new = "\thrtimer_setup(&priv->agg_hrtimer, rmnet_usb_tx_agg_timer_cb, HRTIMER_MODE_REL, CLOCK_MONOTONIC);"
           if new in s:
               print("Quectel QMI WWAN hrtimer API patch already applied.")
           elif old in s:
