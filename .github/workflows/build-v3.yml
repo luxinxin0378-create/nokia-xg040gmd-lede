@@ -208,7 +208,7 @@ jobs:
               raise SystemExit("Nokia MD profile endef not found")
           block = "".join(lines[start:end])
           if "airoha-en7581-npu-firmware" not in block:
-              lines.insert(end, "\\tDEVICE_PACKAGES += airoha-en7581-npu-firmware\\n")
+              lines.insert(end, "\tDEVICE_PACKAGES += airoha-en7581-npu-firmware\n")
               p.write_text("".join(lines))
           PY
           grep -q '&npu' "$DTS"
