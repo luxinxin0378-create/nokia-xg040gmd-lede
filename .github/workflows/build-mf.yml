@@ -67,7 +67,7 @@ jobs:
           if not any("airoha-an7583-npu-firmware" in line for line in lines):
               for i, line in enumerate(lines):
                   if line.startswith("DEVICE_PACKAGES := kmod-phy-airoha-en8811h"):
-                      lines.insert(i + 1, "\\tairoha-an7583-npu-firmware \\\\n")
+                      lines.insert(i + 1, chr(9) + "airoha-an7583-npu-firmware " + chr(92) + chr(10))
                       break
               else:
                   raise SystemExit("Could not locate MF common DEVICE_PACKAGES line")
