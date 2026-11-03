@@ -119,22 +119,9 @@ jobs:
           git clone https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
           git -C package/luci-app-airoha-npu checkout 14521b8414da1e98517a295d8ec267087c7dde8e
 
-          # Disable the direct PLL-write RPC. Keep supported governor/OPP controls.
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("package/luci-app-airoha-npu/root/usr/libexec/rpcd/luci.airoha_npu")
-          s = p.read_text()
-          start = s.index("set_overclock() {")
-          end = s.index("\n}\n", start) + 3
-          replacement = """set_overclock() {
-          \techo '{"error":"PLL overclock is disabled by firmware build policy"}'
-          }
-          """
-          s = s[:start] + replacement + s[end:]
-          if 'configure_armpll "$soc"' in s:
-              raise SystemExit("PLL write path was not removed")
-          p.write_text(s)
-          PY
+          # Keep manual PLL overclock controls available in LuCI; do not auto-apply on boot.
+          # Align package visibility with the AN7581 subtarget so Kconfig retains the NPU page.
+          sed -i 's/@TARGET_airoha$/@TARGET_airoha_an7581/' package/luci-app-airoha-npu/Makefile
           {
             echo 'CONFIG_PACKAGE_luci-app-cpufreq=y'
             echo 'CONFIG_PACKAGE_luci-app-airoha-npu=y'
@@ -179,7 +166,7 @@ jobs:
           {
             echo "CPU apps:"
             grep '^CONFIG_PACKAGE_luci-app-' .config | grep -E 'cpufreq|airoha-npu' || true
-            echo "Direct PLL overclock RPC: disabled"
+            echo "Direct PLL overclock RPC: retained (manual control; no boot auto-overclock)"
           } > "$GITHUB_WORKSPACE/output/cpu-management-audit.txt"
           cp .config "$GITHUB_WORKSPACE/output/build.config.resolved"
 
