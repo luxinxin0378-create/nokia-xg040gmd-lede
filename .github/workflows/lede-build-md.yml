@@ -58,14 +58,8 @@ jobs:
           # NPU binary-memory region on this non-Wi-Fi-offload Nokia MD board.
           MD_COMMON_DTS=target/linux/airoha/dts/an7581-nokia_xg-040g-md-common.dtsi
           grep -q 'an7581.dtsi' "$MD_COMMON_DTS"
-          if ! grep -Eq '^&npu[[:space:]]*\{' "$MD_COMMON_DTS"; then
-            cat >> "$MD_COMMON_DTS" <<'EOF'
-
-          /* Enable AN7581 NPU firmware/flow offload on Nokia XG-040G-MD. */
-          &npu {
-            status = "okay";
-          };
-          EOF
+          if ! grep -Eq '^&npu[[:space:]]*\\{' "$MD_COMMON_DTS"; then
+            printf '\\n/* Enable AN7581 NPU firmware/flow offload on Nokia XG-040G-MD. */\\n&npu {\\n\\tstatus = "okay";\\n};\\n' >> "$MD_COMMON_DTS"
           fi
           grep -A2 '^&npu' "$MD_COMMON_DTS"
           mkdir -p "$GITHUB_WORKSPACE/output"
