@@ -65,16 +65,20 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           p = Path("target/linux/airoha/image/an7583.mk")
-          text = p.read_text()
-          if "airoha-an7583-npu-firmware" not in text:
-              start = text.find("define Device/nokia_xg-040g-mf-common")
-              if start < 0:
-                  raise SystemExit("Nokia MF common device definition not found")
-              end = text.find("\\nendef", start)
-              if end < 0:
-                  raise SystemExit("Nokia MF common device definition end not found")
-              text = text[:end] + "\\n  DEVICE_PACKAGES += airoha-an7583-npu-firmware" + text[end:]
-              p.write_text(text)
+          lines = p.read_text().splitlines(keepends=True)
+          start = next((i for i, line in enumerate(lines)
+                        if line.startswith("define Device/nokia_xg-040g-mf-common")), None)
+          if start is None:
+              raise SystemExit("Nokia MF common device definition not found")
+          end = next((i for i in range(start + 1, len(lines))
+                      if lines[i].strip() == "endef"), None)
+          if end is None:
+              raise SystemExit("Nokia MF common device definition end not found")
+          block = "".join(lines[start:end])
+          if "airoha-an7583-npu-firmware" not in block:
+              lines.insert(end, "\\tDEVICE_PACKAGES += airoha-an7583-npu-firmware\\n")
+              p.write_text("".join(lines))
+          PY
           PY
           # The base AN7583 DTS disables NPU by default; enable it for MF UBI only.
           if ! grep -q '&npu' "$DTS"; then
