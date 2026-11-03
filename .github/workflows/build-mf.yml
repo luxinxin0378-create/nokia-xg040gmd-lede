@@ -59,19 +59,22 @@ jobs:
           grep -qx 'CONFIG_NET_AIROHA_NPU=y' target/linux/airoha/an7583/config-6.18
           grep -q 'compatible = "airoha,an7583-npu"' target/linux/airoha/dts/an7583.dtsi
           grep -q 'Package/airoha-an7583-npu-firmware' package/firmware/linux-firmware/airoha.mk
-          # Add the AN7583 firmware to the MF device image package list.
+          # Add the NPU firmware at the Nokia MF common device definition.
+          # The upstream DEVICE_PACKAGES assignment is continued across several lines,
+          # so do not rely on matching its first physical line.
           python3 - <<'PY'
           from pathlib import Path
           p = Path("target/linux/airoha/image/an7583.mk")
-          lines = p.read_text().splitlines(keepends=True)
-          if not any("airoha-an7583-npu-firmware" in line for line in lines):
-              for i, line in enumerate(lines):
-                  if line.startswith("DEVICE_PACKAGES := kmod-phy-airoha-en8811h"):
-                      lines.insert(i + 1, chr(9) + "airoha-an7583-npu-firmware " + chr(92) + chr(10))
-                      break
-              else:
-                  raise SystemExit("Could not locate MF common DEVICE_PACKAGES line")
-              p.write_text("".join(lines))
+          text = p.read_text()
+          if "airoha-an7583-npu-firmware" not in text:
+              start = text.find("define Device/nokia_xg-040g-mf-common")
+              if start < 0:
+                  raise SystemExit("Nokia MF common device definition not found")
+              end = text.find("\\nendef", start)
+              if end < 0:
+                  raise SystemExit("Nokia MF common device definition end not found")
+              text = text[:end] + "\\n  DEVICE_PACKAGES += airoha-an7583-npu-firmware" + text[end:]
+              p.write_text(text)
           PY
           # The base AN7583 DTS disables NPU by default; enable it for MF UBI only.
           if ! grep -q '&npu' "$DTS"; then
