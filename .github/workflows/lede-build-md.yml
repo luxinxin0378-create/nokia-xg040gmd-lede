@@ -1,4 +1,4 @@
-name: LEDE Nokia XG-040G-MD
+name: LEDE Nokia XG-040G-MD NPU Firmware
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Nokia XG-040G-MD UBI firmware
+    name: Build Nokia XG-040G-MD UBI NPU firmware
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -169,16 +169,22 @@ jobs:
           find openwrt/bin/targets/airoha/an7581 -maxdepth 1 -type f \
             \( -iname '*nokia_xg-040g-md-ubi*' -o -iname '*nokia_xg-040g-md*manifest' \) \
             -exec cp -v {} "$GITHUB_WORKSPACE/output/" \;
+          # Mark the distributed firmware image filenames as NPU-enabled.
+          for image in "$GITHUB_WORKSPACE"/output/*.itb; do
+            [ -f "$image" ] || continue
+            base="${image%.itb}"
+            case "$base" in *-NPU) ;; *) mv "$image" "${base}-NPU.itb" ;; esac
+          done
           cp openwrt/.config "$GITHUB_WORKSPACE/output/build.config"
           cp openwrt/feeds.conf.default "$GITHUB_WORKSPACE/output/feeds.conf.default"
-          test -n "$(find "$GITHUB_WORKSPACE/output" -maxdepth 1 -type f -iname '*nokia_xg-040g-md-ubi*' -print -quit)"
+          test -n "$(find "$GITHUB_WORKSPACE/output" -maxdepth 1 -type f -iname '*nokia_xg-040g-md-ubi*NPU*.itb' -print -quit)"
           ls -lh "$GITHUB_WORKSPACE/output"
 
       - name: Upload firmware
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: lede-nokia-xg040gmd-ubi-firmware
+          name: lede-nokia-xg040gmd-ubi-npu-firmware
           path: output/*
           if-no-files-found: error
           retention-days: 14
@@ -187,7 +193,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: lede-nokia-xg040gmd-build-diagnostics
+          name: lede-nokia-xg040gmd-npu-build-diagnostics
           path: |
             openwrt/.config
             openwrt/logs/**
