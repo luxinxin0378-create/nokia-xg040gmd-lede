@@ -53,15 +53,20 @@ jobs:
           cat "$GITHUB_WORKSPACE/lede-feeds.conf" >> feeds.conf.default
           grep -q 'Device/nokia_xg-040g-md-ubi' target/linux/airoha/image/an7581.mk
           test -f target/linux/airoha/dts/an7581-nokia_xg-040g-md-ubi.dts
-          # The AN7581 NPU driver and firmware are provided by the target, but
-          # the generic SoC DTS leaves the NPU node disabled. Enable only the
-          # NPU binary-memory region on this non-Wi-Fi-offload Nokia MD board.
-          MD_COMMON_DTS=target/linux/airoha/dts/an7581-nokia_xg-040g-md-common.dtsi
-          grep -q 'an7581.dtsi' "$MD_COMMON_DTS"
-          if ! grep -Eq '^&npu[[:space:]]*\\{' "$MD_COMMON_DTS"; then
-            printf '\\n/* Enable AN7581 NPU firmware/flow offload on Nokia XG-040G-MD. */\\n&npu {\\n\\tstatus = "okay";\\n};\\n' >> "$MD_COMMON_DTS"
-          fi
-          grep -A2 '^&npu' "$MD_COMMON_DTS"
+          # Enable the EN7581 NPU only on the MD UBI board. The base SoC DTS
+          # already reserves the NPU binary memory region; do not add Wi-Fi-only
+          # packet/tx buffer reservations on this non-Airoha-Wi-Fi model.
+          MD_DTS=target/linux/airoha/dts/an7581-nokia_xg-040g-md-ubi.dts
+          cat >> "$MD_DTS" <<'EOF'
+
+          /* Enable EN7581 NPU flow-offload firmware on Nokia XG-040G-MD. */
+          &npu {
+            status = "okay";
+            firmware-name = "airoha/en7581_npu_rv32.bin",
+                            "airoha/en7581_npu_data.bin";
+          };
+          EOF
+          grep -A5 '^&npu' "$MD_DTS"
           mkdir -p "$GITHUB_WORKSPACE/output"
           {
             echo "Source: https://github.com/coolsnowwolf/lede"
