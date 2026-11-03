@@ -125,9 +125,22 @@ jobs:
             done
           } >> .config
           make defconfig
-          grep -qx 'CONFIG_TARGET_airoha=y' .config
-          grep -qx 'CONFIG_TARGET_airoha_an7581=y' .config
-          grep -Eq '^CONFIG_TARGET_DEVICE_.*nokia.*xg.*040g.*md.*ubi=y$' .config
+          # Print resolved target values before asserting; upstream may normalize config names.
+          grep -E '^CONFIG_TARGET_(airoha|airoha_an7581|DEVICE_.*nokia.*xg.*040g.*md.*ubi)=' .config || true
+          python3 - <<'PY'
+          from pathlib import Path
+          cfg = Path(".config").read_text().splitlines()
+          expected = [
+              "CONFIG_TARGET_airoha=y",
+              "CONFIG_TARGET_airoha_an7581=y",
+              "CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg-040g-md-ubi=y",
+          ]
+          missing = [item for item in expected if item not in cfg]
+          if missing:
+              print("Target config check failed; missing:", *missing, sep="\\n  ")
+              raise SystemExit(1)
+          print("Target config validation passed.")
+          PY
           # NPU firmware package is validated through the resolved device image and kernel config.
           grep -qx 'CONFIG_NET_AIROHA_NPU=y' target/linux/airoha/an7581/config-6.18
           {
