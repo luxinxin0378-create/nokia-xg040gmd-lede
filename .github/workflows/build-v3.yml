@@ -187,31 +187,38 @@ jobs:
           test -f "$PROFILE"
           grep -Rqs 'CONFIG_NET_AIROHA_NPU=y' target/linux/airoha
           grep -Rqs 'compatible = "airoha,en7581-npu"' target/linux/airoha/dts
-          # Enable the NPU node for the Nokia MD DTS.
-          if ! grep -q 'status = "okay";' "$DTS" | grep -q npu; then
-            printf '\\n&npu {\\n\\tstatus = "okay";\\n};\\n' >> "$DTS"
+          # Activate the NPU node only once.
+          if ! grep -Eq '&npu[[:space:]]*\{|status = "okay";' "$DTS"; then
+            printf '\n&npu {\n\tstatus = "okay";\n};\n' >> "$DTS"
+          elif ! grep -q '&npu' "$DTS"; then
+            printf '\n&npu {\n\tstatus = "okay";\n};\n' >> "$DTS"
           fi
-          # Ensure the AN7581 NPU firmware package exists, then add it to the MD profile.
           grep -Rqs 'airoha-en7581-npu-firmware' package/firmware/linux-firmware
           python3 - "$PROFILE" <<'PY'
           from pathlib import Path
           import sys
-          p=Path(sys.argv[1]); s=p.read_text()
-          key='Device/nokia_xg-040g-md-common'
-          pos=s.find(key)
-          if pos < 0: raise SystemExit('Nokia XG-040G-MD common profile not found')
-          end=s.find('endef', pos)
-          if end < 0: raise SystemExit('profile endef not found')
-          block=s[pos:end]
+          p = Path(sys.argv[1])
+          s = p.read_text()
+          start = s.find('Device/nokia_xg-040g-md-common')
+          if start < 0:
+              raise SystemExit('Nokia XG-040G-MD common profile not found')
+          end = s.find('endef', start)
+          if end < 0:
+              raise SystemExit('Nokia MD profile endef not found')
+          block = s[start:end]
           if 'airoha-en7581-npu-firmware' not in block:
-              idx=block.find('DEVICE_PACKAGES')
-              if idx < 0: raise SystemExit('DEVICE_PACKAGES not found in Nokia MD profile')
-              line_end=block.find('\\n', idx)
-              if line_end < 0: line_end=len(block)
-              block=block[:line_end]+' \\\\\n\\tairoha-en7581-npu-firmware'+block[line_end:]
-              s=s[:pos]+block+s[end:]
+              marker = 'DEVICE_PACKAGES'
+              idx = block.find(marker)
+              if idx < 0:
+                  raise SystemExit('DEVICE_PACKAGES missing from Nokia MD profile')
+              line_end = block.find('\n', idx)
+              if line_end < 0:
+                  line_end = len(block)
+              block = block[:line_end] + ' \\\n\tairoha-en7581-npu-firmware' + block[line_end:]
+              s = s[:start] + block + s[end:]
               p.write_text(s)
           PY
+          grep -q '&npu' "$DTS"
           grep -q 'status = "okay";' "$DTS"
           grep -q 'airoha-en7581-npu-firmware' "$PROFILE"
           {
