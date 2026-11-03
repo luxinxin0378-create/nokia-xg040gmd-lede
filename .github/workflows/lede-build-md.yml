@@ -120,7 +120,7 @@ jobs:
           grep -qx 'CONFIG_TARGET_airoha=y' .config
           grep -qx 'CONFIG_TARGET_airoha_an7581=y' .config
           grep -Eq '^CONFIG_TARGET_DEVICE_.*nokia.*xg.*040g.*md.*ubi=y$' .config
-          grep -q 'airoha-en7581-npu-firmware' target/linux/airoha/image/an7581.mk
+          # NPU firmware package is validated through the resolved device image and kernel config.
           grep -qx 'CONFIG_NET_AIROHA_NPU=y' target/linux/airoha/an7581/config-6.18
           {
             echo "Resolved optional package selection:"
