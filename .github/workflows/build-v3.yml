@@ -197,25 +197,19 @@ jobs:
           from pathlib import Path
           import sys
           p = Path(sys.argv[1])
-          s = p.read_text()
-          start = s.find('Device/nokia_xg-040g-md-common')
-          if start < 0:
-              raise SystemExit('Nokia XG-040G-MD common profile not found')
-          end = s.find('endef', start)
-          if end < 0:
-              raise SystemExit('Nokia MD profile endef not found')
-          block = s[start:end]
-          if 'airoha-en7581-npu-firmware' not in block:
-              marker = 'DEVICE_PACKAGES'
-              idx = block.find(marker)
-              if idx < 0:
-                  raise SystemExit('DEVICE_PACKAGES missing from Nokia MD profile')
-              line_end = block.find('\n', idx)
-              if line_end < 0:
-                  line_end = len(block)
-              block = block[:line_end] + ' \\\n\tairoha-en7581-npu-firmware' + block[line_end:]
-              s = s[:start] + block + s[end:]
-              p.write_text(s)
+          lines = p.read_text().splitlines(keepends=True)
+          start = next((i for i, line in enumerate(lines)
+                        if line.startswith("define Device/nokia_xg-040g-md-common")), None)
+          if start is None:
+              raise SystemExit("Nokia MD common profile not found")
+          end = next((i for i in range(start + 1, len(lines))
+                      if lines[i].strip() == "endef"), None)
+          if end is None:
+              raise SystemExit("Nokia MD profile endef not found")
+          block = "".join(lines[start:end])
+          if "airoha-en7581-npu-firmware" not in block:
+              lines.insert(end, "\\tDEVICE_PACKAGES += airoha-en7581-npu-firmware\\n")
+              p.write_text("".join(lines))
           PY
           grep -q '&npu' "$DTS"
           grep -q 'status = "okay";' "$DTS"
