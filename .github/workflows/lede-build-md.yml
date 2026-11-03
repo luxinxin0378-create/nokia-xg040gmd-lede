@@ -91,6 +91,13 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
+      - name: Add Airoha NPU LuCI management interface
+        working-directory: openwrt
+        run: |
+          # Upstream dashboard for AN7581/AN7583: NPU status, offload and engine monitoring.
+          git clone --depth=1 https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
+          test -f package/luci-app-airoha-npu/Makefile
+
       - name: Configure packages and validate target
         working-directory: openwrt
         run: |
@@ -100,6 +107,7 @@ jobs:
             echo 'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y'
             for pkg in \
               luci-theme-argon luci-app-adguardhome adguardhome \
+              luci-app-airoha-npu \
               luci-app-openclash luci-app-passwall2 luci-app-homeproxy \
               luci-app-nlbwmon nlbwmon luci-app-statistics \
               luci-app-ttyd ttyd luci-app-wol luci-app-ddns ddns-scripts \
@@ -136,6 +144,20 @@ jobs:
             done
           } > "$GITHUB_WORKSPACE/output/package-availability.txt"
           cp .config "$GITHUB_WORKSPACE/output/build.config.resolved"
+
+      - name: Enable hardware flow offloading defaults
+        working-directory: openwrt
+        run: |
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/98-enable-hw-offload <<'EOF'
+          #!/bin/sh
+          # Enable OpenWrt firewall flow offloading and hardware offload on AN7581.
+          uci -q set firewall.@defaults[0].flow_offloading='1'
+          uci -q set firewall.@defaults[0].flow_offloading_hw='1'
+          uci -q commit firewall
+          exit 0
+          EOF
+          chmod 0755 files/etc/uci-defaults/98-enable-hw-offload
 
       - name: Add safe CPU governor default
         working-directory: openwrt
