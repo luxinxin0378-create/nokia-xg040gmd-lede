@@ -1,4 +1,4 @@
-name: Nokia XG-040G-MF PonWrt Firmware
+name: PonWrt Nokia XG-040G-MF NPU Firmware
 
 on:
   workflow_dispatch:
@@ -216,15 +216,21 @@ jobs:
           find openwrt/bin/targets/airoha/an7583 -maxdepth 1 -type f \
             \( -iname '*nokia_xg-040g-mf-ubi*' -o -iname '*nokia_xg-040g-mf*manifest' \) \
             -exec cp -v {} "$GITHUB_WORKSPACE/output/" \;
+          # Mark the distributed firmware image filenames as NPU-enabled.
+          for image in "$GITHUB_WORKSPACE"/output/*.itb; do
+            [ -f "$image" ] || continue
+            base="${image%.itb}"
+            case "$base" in *-NPU) ;; *) mv "$image" "${base}-NPU.itb" ;; esac
+          done
           cp openwrt/.config "$GITHUB_WORKSPACE/output/build.config"
           cp openwrt/feeds.conf.default "$GITHUB_WORKSPACE/output/feeds.conf.default"
-          test -n "$(find "$GITHUB_WORKSPACE/output" -maxdepth 1 -type f -iname '*nokia_xg-040g-mf-ubi*' -print -quit)"
+          test -n "$(find "$GITHUB_WORKSPACE/output" -maxdepth 1 -type f -iname '*nokia_xg-040g-mf-ubi*NPU*.itb' -print -quit)"
 
       - name: Upload firmware artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: ponwrt-nokia-xg040gmf-ubi
+          name: ponwrt-nokia-xg040gmf-ubi-npu-firmware
           path: output/*
           if-no-files-found: error
           retention-days: 14
@@ -233,7 +239,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ponwrt-nokia-xg040gmd-build-diagnostics
+          name: ponwrt-nokia-xg040gmf-npu-build-diagnostics
           path: |
             openwrt/.config
             openwrt/logs/**
