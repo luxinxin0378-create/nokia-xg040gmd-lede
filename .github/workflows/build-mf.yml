@@ -52,6 +52,38 @@ jobs:
           git clone --depth=1 https://github.com/pbs05/ponwrt.git openwrt
           cd openwrt
           cp configs/an7583.config .config
+          # Enable AN7583 NPU only on the Nokia MF UBI device tree.
+          DTS=target/linux/airoha/dts/an7583-nokia_xg-040g-mf-ubi.dts
+          IMAGE_MK=target/linux/airoha/image/an7583.mk
+          test -f "$DTS"
+          grep -qx 'CONFIG_NET_AIROHA_NPU=y' target/linux/airoha/an7583/config-6.18
+          grep -q 'compatible = "airoha,an7583-npu"' target/linux/airoha/dts/an7583.dtsi
+          grep -q 'Package/airoha-an7583-npu-firmware' package/firmware/linux-firmware/airoha.mk
+          # Add the AN7583 firmware to the MF device image package list.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("target/linux/airoha/image/an7583.mk")
+          s = p.read_text()
+          old = "DEVICE_PACKAGES := kmod-phy-airoha-en8811h \\\n"
+          new = old + "\\tairoha-an7583-npu-firmware \\\n"
+          if "airoha-an7583-npu-firmware" not in s:
+              if old not in s:
+                  raise SystemExit("Could not locate MF common DEVICE_PACKAGES line")
+              s = s.replace(old, new, 1)
+              p.write_text(s)
+          PY
+          # The base AN7583 DTS disables NPU by default; enable it for MF UBI only.
+          if ! grep -q '&npu' "$DTS"; then
+            cat >> "$DTS" <<'EOF'
+
+          /* Enable AN7583 hardware NPU on Nokia XG-040G-MF UBI. */
+          &npu {
+            status = "okay";
+          };
+          EOF
+          fi
+          grep -q 'airoha-an7583-npu-firmware' "$IMAGE_MK"
+          grep -q '&npu' "$DTS"
           # Build only the Nokia MF UBI profile; never emit the stock-layout image.
           sed -i 's/^CONFIG_TARGET_DEVICE_airoha_an7583_DEVICE_nokia_xg-040g-mf=y/# CONFIG_TARGET_DEVICE_airoha_an7583_DEVICE_nokia_xg-040g-mf is not set/' .config
           cat "$GITHUB_WORKSPACE/feeds.conf.add" >> feeds.conf.default
@@ -97,6 +129,14 @@ jobs:
           } >> .config
           make defconfig
           grep -qx 'CONFIG_TARGET_DEVICE_airoha_an7583_DEVICE_nokia_xg-040g-mf-ubi=y' .config
+          grep -qx 'CONFIG_NET_AIROHA_NPU=y' target/linux/airoha/an7583/config-6.18
+          grep -q 'airoha-an7583-npu-firmware' target/linux/airoha/image/an7583.mk
+          {
+            echo "NPU audit:"
+            echo "Kernel: CONFIG_NET_AIROHA_NPU=y"
+            echo "DTS: Nokia XG-040G-MF UBI enables &npu"
+            echo "Firmware: airoha-an7583-npu-firmware included in device packages"
+          } > "$GITHUB_WORKSPACE/output/npu-support-audit.txt"
           {
             echo "Optional package resolution:"
             for pkg in \
