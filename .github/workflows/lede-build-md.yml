@@ -68,8 +68,8 @@ jobs:
                   raise SystemExit("Nokia MD common device profile end not found")
               for i in range(start + 1, end):
                   if "luci-app-pon" in lines[i]:
-                      lines[i] = lines[i].rstrip("\\n") + " \\\\n"
-                      lines.insert(i + 1, "\\tairoha-en7581-npu-firmware\\n")
+                      lines[i] = lines[i].rstrip(chr(10)) + " " + chr(92) + chr(10)
+                      lines.insert(i + 1, chr(9) + "airoha-en7581-npu-firmware" + chr(10))
                       break
               else:
                   raise SystemExit("Could not extend Nokia MD DEVICE_PACKAGES")
