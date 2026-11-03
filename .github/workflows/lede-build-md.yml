@@ -1,0 +1,180 @@
+name: LEDE - Nokia XG-040G-MD Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: "Parallel compile jobs (2 recommended for memory safety)"
+        required: true
+        type: choice
+        options: ["2", "3", "4"]
+        default: "2"
+  push:
+    paths:
+      - ".github/workflows/lede-build-md.yml"
+      - "lede-config.seed"
+      - "lede-feeds.conf"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lede-nokia-xg040gmd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout LEDE build configuration
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint \
+            binutils bison build-essential bzip2 ccache clang cmake cpio curl \
+            device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
+            g++-multilib git gnutls-dev gperf haveged help2man intltool \
+            lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm \
+            lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf \
+            python3 python3-pip python3-ply python3-docutils python3-pyelftools \
+            qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo \
+            uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+
+      - name: Clone LEDE and select Nokia XG-040G-MD UBI profile
+        run: |
+          git clone --depth=1 https://github.com/coolsnowwolf/lede.git openwrt
+          cd openwrt
+          cp "$GITHUB_WORKSPACE/lede-config.seed" .config
+          cat "$GITHUB_WORKSPACE/lede-feeds.conf" >> feeds.conf.default
+          grep -q 'Device/nokia_xg-040g-md-ubi' target/linux/airoha/image/an7581.mk
+          test -f target/linux/airoha/dts/an7581-nokia_xg-040g-md-ubi.dts
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          {
+            echo "Source: https://github.com/coolsnowwolf/lede"
+            echo "Target: airoha/an7581"
+            echo "Profile: nokia_xg-040g-md-ubi"
+            echo "DTS: an7581-nokia_xg-040g-md-ubi"
+            echo "Image type: UBI sysupgrade.itb"
+          } > "$GITHUB_WORKSPACE/output/source-profile-audit.txt"
+
+      - name: Update and install feeds
+        working-directory: openwrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Select requested LuCI, network, 5G and USB Wi-Fi packages
+        working-directory: openwrt
+        run: |
+          {
+            echo 'CONFIG_PACKAGE_luci=y'
+            echo 'CONFIG_PACKAGE_luci-compat=y'
+            echo 'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y'
+            for pkg in \
+              luci-theme-argon luci-app-adguardhome adguardhome \
+              luci-app-openclash luci-app-passwall2 luci-app-homeproxy \
+              luci-app-nlbwmon nlbwmon luci-app-statistics \
+              luci-app-ttyd ttyd luci-app-wol luci-app-ddns ddns-scripts \
+              luci-app-sqm sqm-scripts htop \
+              qmodem luci-app-qmodem-next \
+              kmod-usb-net kmod-usb-net-cdc-ether kmod-usb-net-cdc-ncm \
+              kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim kmod-usb-net-rndis \
+              kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan \
+              usb-modeswitch uqmi umbim comgt comgt-ncm \
+              luci-proto-qmi luci-proto-mbim luci-proto-ncm \
+              kmod-mac80211 kmod-cfg80211 iw iwinfo \
+              kmod-mt7601u kmod-mt76x0u kmod-mt76x2u \
+              kmod-ath9k-htc kmod-rtl8xxxu kmod-rtl8187; do
+              echo "CONFIG_PACKAGE_${pkg}=y"
+            done
+          } >> .config
+          make defconfig
+          grep -qx 'CONFIG_TARGET_airoha=y' .config
+          grep -qx 'CONFIG_TARGET_airoha_an7581=y' .config
+          grep -qx 'CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg-040g-md-ubi=y' .config
+          {
+            echo "Resolved optional package selection:"
+            for pkg in \
+              luci-theme-argon luci-app-adguardhome adguardhome \
+              luci-app-openclash luci-app-passwall2 luci-app-homeproxy \
+              luci-app-nlbwmon luci-app-statistics luci-app-ttyd \
+              luci-app-sqm qmodem luci-app-qmodem-next \
+              kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim \
+              luci-proto-qmi luci-proto-mbim \
+              kmod-mt7601u kmod-mt76x0u kmod-mt76x2u \
+              kmod-ath9k-htc kmod-rtl8xxxu kmod-rtl8187; do
+              if grep -qx "CONFIG_PACKAGE_${pkg}=y" .config; then
+                echo "ENABLED ${pkg}"
+              else
+                echo "UNAVAILABLE_OR_DEPENDENCY_MISSING ${pkg}"
+              fi
+            done
+          } > "$GITHUB_WORKSPACE/output/package-availability.txt"
+          cp .config "$GITHUB_WORKSPACE/output/build.config.resolved"
+
+      - name: Add CPU frequency governor default
+        working-directory: openwrt
+        run: |
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/99-cpufreq-schedutil <<'EOF'
+          #!/bin/sh
+          p=/sys/devices/system/cpu/cpufreq/policy0
+          [ -w "$p/scaling_governor" ] || exit 0
+          avail="$(cat "$p/scaling_available_governors" 2>/dev/null)"
+          case " $avail " in
+            *" schedutil "*) echo schedutil > "$p/scaling_governor" ;;
+            *) logger -t cpufreq-default "schedutil unavailable; keep kernel default" ;;
+          esac
+          exit 0
+          EOF
+          chmod 0755 files/etc/uci-defaults/99-cpufreq-schedutil
+          echo "Default governor: schedutil when supported; no PLL overclock or voltage changes." \
+            > "$GITHUB_WORKSPACE/output/cpu-management-audit.txt"
+
+      - name: Download sources
+        working-directory: openwrt
+        run: make download -j8
+
+      - name: Compile LEDE firmware
+        working-directory: openwrt
+        env:
+          BUILD_JOBS: ${{ inputs.jobs || '2' }}
+        run: make -j"${BUILD_JOBS}" V=s
+
+      - name: Collect Nokia XG-040G-MD UBI images and build reports
+        if: success()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          find openwrt/bin/targets/airoha/an7581 -maxdepth 1 -type f \
+            \( -iname '*nokia_xg-040g-md-ubi*' -o -iname '*nokia_xg-040g-md*manifest' \) \
+            -exec cp -v {} "$GITHUB_WORKSPACE/output/" \;
+          cp openwrt/.config "$GITHUB_WORKSPACE/output/build.config"
+          cp openwrt/feeds.conf.default "$GITHUB_WORKSPACE/output/feeds.conf.default"
+          test -n "$(find "$GITHUB_WORKSPACE/output" -maxdepth 1 -type f -iname '*nokia_xg-040g-md-ubi*' -print -quit)"
+          ls -lh "$GITHUB_WORKSPACE/output"
+
+      - name: Upload LEDE firmware artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lede-nokia-xg040gmd-ubi-firmware
+          path: output/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lede-nokia-xg040gmd-build-diagnostics
+          path: |
+            openwrt/.config
+            openwrt/logs/**
+            output/**
+          if-no-files-found: ignore
+          retention-days: 7
