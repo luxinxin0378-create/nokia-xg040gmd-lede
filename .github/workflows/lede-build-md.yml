@@ -125,7 +125,10 @@ jobs:
             done
           } >> .config
           make defconfig
-          # Print resolved target values before asserting; upstream may normalize config names.
+          # Reassert the requested UBI profile after package normalization and resolve again.
+          echo 'CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg-040g-md-ubi=y' >> .config
+          make defconfig
+          # Print resolved Airoha/Nokia profile symbols for diagnostics.
           grep -E '^CONFIG_TARGET_(airoha|airoha_an7581|DEVICE_.*nokia.*xg.*040g.*md.*ubi)=' .config || true
           python3 - <<'PY'
           from pathlib import Path
@@ -138,6 +141,8 @@ jobs:
           missing = [item for item in expected if item not in cfg]
           if missing:
               print("Target config check failed; missing:", *missing, sep="\\n  ")
+              print("Resolved Nokia target entries:")
+              print("\\n".join(x for x in cfg if "nokia" in x.lower() and "TARGET_DEVICE" in x))
               raise SystemExit(1)
           print("Target config validation passed.")
           PY
