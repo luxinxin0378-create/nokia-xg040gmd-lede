@@ -47,14 +47,36 @@ jobs:
           grep -q 'CONFIG_NET_AIROHA_NPU=y' target/linux/airoha/an7581/config-6.18
           cat >> "$MD_DTS" <<'EOF'
 
-          /* EN7581 NPU flow-offload firmware; no Wi-Fi-only buffer carveouts. */
+          /* Enable EN7581 hardware NPU on Nokia XG-040G-MD UBI. */
           &npu {
             status = "okay";
-            firmware-name = "airoha/en7581_npu_rv32.bin",
-                            "airoha/en7581_npu_data.bin";
           };
           EOF
+          # Put the matching EN7581 NPU firmware in this Nokia device image.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("target/linux/airoha/image/an7581.mk")
+          lines = p.read_text().splitlines(keepends=True)
+          if not any("airoha-en7581-npu-firmware" in line for line in lines):
+              start = next((i for i, line in enumerate(lines)
+                            if line.startswith("define Device/nokia_xg-040g-md-common")), None)
+              if start is None:
+                  raise SystemExit("Nokia MD common device profile not found")
+              end = next((i for i in range(start + 1, len(lines))
+                          if lines[i].strip() == "endef"), None)
+              if end is None:
+                  raise SystemExit("Nokia MD common device profile end not found")
+              for i in range(start + 1, end):
+                  if "luci-app-pon" in lines[i]:
+                      lines[i] = lines[i].rstrip("\\n") + " \\\\n"
+                      lines.insert(i + 1, "\\tairoha-en7581-npu-firmware\\n")
+                      break
+              else:
+                  raise SystemExit("Could not extend Nokia MD DEVICE_PACKAGES")
+              p.write_text("".join(lines))
+          PY
           grep -A5 '^&npu' "$MD_DTS"
+          grep -A10 '^define Device/nokia_xg-040g-md-common' target/linux/airoha/image/an7581.mk
           mkdir -p "$GITHUB_WORKSPACE/output"
           printf '%s\n' \
             "Source: https://github.com/coolsnowwolf/lede" \
@@ -98,7 +120,7 @@ jobs:
           grep -qx 'CONFIG_TARGET_airoha=y' .config
           grep -qx 'CONFIG_TARGET_airoha_an7581=y' .config
           grep -Eq '^CONFIG_TARGET_DEVICE_.*nokia.*xg.*040g.*md.*ubi=y$' .config
-          grep -qx 'CONFIG_PACKAGE_airoha-en7581-npu-firmware=y' .config
+          grep -q 'airoha-en7581-npu-firmware' target/linux/airoha/image/an7581.mk
           grep -qx 'CONFIG_NET_AIROHA_NPU=y' target/linux/airoha/an7581/config-6.18
           {
             echo "Resolved optional package selection:"
