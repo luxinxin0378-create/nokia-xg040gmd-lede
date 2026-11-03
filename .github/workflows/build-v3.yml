@@ -89,7 +89,7 @@ jobs:
               kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan \
               usb-modeswitch uqmi umbim comgt comgt-ncm \
               luci-proto-qmi luci-proto-mbim luci-proto-ncm \
-              kmod-mac80211 kmod-cfg80211 iw iwinfo; do
+              ; do
               echo "CONFIG_PACKAGE_${pkg}=y"
             done
           } >> .config
