@@ -148,11 +148,16 @@ jobs:
               raise SystemExit(1)
           print("Target config validation passed.")
           PY
-          # NPU firmware package is validated through the resolved device image and kernel config.
+          # Require the LuCI NPU app to survive Kconfig normalization.
+          if ! grep -qx 'CONFIG_PACKAGE_luci-app-airoha-npu=y' .config; then
+            echo "ERROR: luci-app-airoha-npu was dropped by make defconfig; refusing to build firmware without its menu."
+            grep -E 'luci-app-airoha-npu|CONFIG_PACKAGE_luci=' .config || true
+            exit 1
+          fi
           grep -qx 'CONFIG_NET_AIROHA_NPU=y' target/linux/airoha/an7581/config-6.18
           {
             echo "Resolved optional package selection:"
-            for pkg in luci-theme-argon luci-app-adguardhome luci-app-openclash \
+            for pkg in luci-app-airoha-npu luci-theme-argon luci-app-adguardhome luci-app-openclash \
               luci-app-passwall2 luci-app-homeproxy luci-app-nlbwmon \
               luci-app-statistics luci-app-ttyd luci-app-sqm \
               airoha-en7581-npu-firmware qmodem luci-app-qmodem-next; do
