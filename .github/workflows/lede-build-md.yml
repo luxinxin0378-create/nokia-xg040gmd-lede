@@ -81,6 +81,7 @@ jobs:
               luci-app-nlbwmon nlbwmon luci-app-statistics \
               luci-app-ttyd ttyd luci-app-wol luci-app-ddns ddns-scripts \
               luci-app-sqm sqm-scripts htop \
+              airoha-en7581-npu-firmware \
               qmodem luci-app-qmodem-next \
               kmod-usb-net kmod-usb-net-cdc-ether kmod-usb-net-cdc-ncm \
               kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim kmod-usb-net-rndis \
@@ -94,9 +95,113 @@ jobs:
             done
           } >> .config
           make defconfig
-          grep -qx 'CONFIG_TARGET_airoha=y' .config
-          grep -qx 'CONFIG_TARGET_airoha_an7581=y' .config
-          grep -qx 'CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg-040g-md-ubi=y' .config
+          echo "Resolved target selection:"
+          grep -E '^CONFIG_TARGET_(airoha|DEVICE_airoha)' .config || true
+          grep -qx 'CONFIG_TARGET_airoha=y' .config || {
+            echo "::error::Airoha target was not selected after make defconfig"
+            exit 1
+          }
+          grep -qx 'CONFIG_TARGET_airoha_an7581=y' .config || {
+            echo "::error::AN7581 subtarget was not selected after make defconfig"
+            exit 1
+          }
+          grep -Eq '^CONFIG_TARGET_DEVICE_.*nokia.*xg.*040g.*md.*ubi=y
+          {
+            echo "Resolved optional package selection:"
+            for pkg in \
+              luci-theme-argon luci-app-adguardhome adguardhome \
+              luci-app-openclash luci-app-passwall2 luci-app-homeproxy \
+              luci-app-nlbwmon luci-app-statistics luci-app-ttyd \
+              luci-app-sqm airoha-en7581-npu-firmware qmodem luci-app-qmodem-next \
+              kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim \
+              luci-proto-qmi luci-proto-mbim \
+              kmod-mt7601u kmod-mt76x0u kmod-mt76x2u \
+              kmod-ath9k-htc kmod-rtl8xxxu kmod-rtl8187; do
+              if grep -qx "CONFIG_PACKAGE_${pkg}=y" .config; then
+                echo "ENABLED ${pkg}"
+              else
+                echo "UNAVAILABLE_OR_DEPENDENCY_MISSING ${pkg}"
+              fi
+            done
+          } > "$GITHUB_WORKSPACE/output/package-availability.txt"
+          cp .config "$GITHUB_WORKSPACE/output/build.config.resolved"
+
+      - name: Add CPU frequency governor default
+        working-directory: openwrt
+        run: |
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/99-cpufreq-schedutil <<'EOF'
+          #!/bin/sh
+          p=/sys/devices/system/cpu/cpufreq/policy0
+          [ -w "$p/scaling_governor" ] || exit 0
+          avail="$(cat "$p/scaling_available_governors" 2>/dev/null)"
+          case " $avail " in
+            *" schedutil "*) echo schedutil > "$p/scaling_governor" ;;
+            *) logger -t cpufreq-default "schedutil unavailable; keep kernel default" ;;
+          esac
+          exit 0
+          EOF
+          chmod 0755 files/etc/uci-defaults/99-cpufreq-schedutil
+          echo "Default governor: schedutil when supported; no PLL overclock or voltage changes." \
+            > "$GITHUB_WORKSPACE/output/cpu-management-audit.txt"
+
+      - name: Download sources
+        working-directory: openwrt
+        run: make download -j8
+
+      - name: Compile LEDE firmware
+        working-directory: openwrt
+        env:
+          BUILD_JOBS: ${{ inputs.jobs || '2' }}
+        run: make -j"${BUILD_JOBS}" V=s
+
+      - name: Collect Nokia XG-040G-MD UBI images and build reports
+        if: success()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          find openwrt/bin/targets/airoha/an7581 -maxdepth 1 -type f \
+            \( -iname '*nokia_xg-040g-md-ubi*' -o -iname '*nokia_xg-040g-md*manifest' \) \
+            -exec cp -v {} "$GITHUB_WORKSPACE/output/" \;
+          cp openwrt/.config "$GITHUB_WORKSPACE/output/build.config"
+          cp openwrt/feeds.conf.default "$GITHUB_WORKSPACE/output/feeds.conf.default"
+          test -n "$(find "$GITHUB_WORKSPACE/output" -maxdepth 1 -type f -iname '*nokia_xg-040g-md-ubi*' -print -quit)"
+          ls -lh "$GITHUB_WORKSPACE/output"
+
+      - name: Upload LEDE firmware artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lede-nokia-xg040gmd-ubi-firmware
+          path: output/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lede-nokia-xg040gmd-build-diagnostics
+          path: |
+            openwrt/.config
+            openwrt/logs/**
+            output/**
+          if-no-files-found: ignore
+          retention-days: 7
+ .config || {
+            echo "::error::Nokia XG-040G-MD UBI profile was not selected after make defconfig"
+            echo "Available Nokia profiles:"
+            grep -i 'nokia' .config || true
+            exit 1
+          }
+          grep -qx 'CONFIG_PACKAGE_airoha-en7581-npu-firmware=y' .config || {
+            echo "::error::AN7581 NPU firmware package was not selected"
+            exit 1
+          }
+          grep -qx 'CONFIG_NET_AIROHA_NPU=y' target/linux/airoha/an7581/config-6.18 || {
+            echo "::error::AN7581 kernel config does not enable NET_AIROHA_NPU"
+            exit 1
+          }
+          echo "AN7581 NPU kernel driver and firmware package are enabled."
           {
             echo "Resolved optional package selection:"
             for pkg in \
