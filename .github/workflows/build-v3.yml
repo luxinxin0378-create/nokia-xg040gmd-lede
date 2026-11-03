@@ -1,4 +1,4 @@
-name: Nokia XG-040G-MD PonWrt Firmware v3 (iStore)
+name: Nokia XG-040G-MD PonWrt Firmware v3 (NPU)
 
 on:
   workflow_dispatch:
@@ -53,8 +53,6 @@ jobs:
           cd openwrt
           cp configs/an7581.config .config
           cat "$GITHUB_WORKSPACE/feeds.conf.add" >> feeds.conf.default
-          echo >> feeds.conf.default
-          echo 'src-git istore https://github.com/linkease/istore;main' >> feeds.conf.default
           grep -q 'Device/nokia_xg-040g-md-ubi' target/linux/airoha/image/an7581.mk
           grep -q '^CONFIG_TARGET_airoha_an7581=y$' .config
           grep -q '^CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg-040g-md-ubi=y$' .config
@@ -73,8 +71,6 @@ jobs:
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          ./scripts/feeds update istore
-          ./scripts/feeds install -d y -p istore luci-app-store
 
       - name: Add optional router packages
         working-directory: openwrt
@@ -84,10 +80,8 @@ jobs:
             echo 'CONFIG_PACKAGE_luci=y'
             echo 'CONFIG_PACKAGE_luci-compat=y'
             echo 'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y'
-            echo 'CONFIG_PACKAGE_luci-compat=y'
-            echo 'CONFIG_PACKAGE_luci-app-store=y'
             for pkg in \
-              luci-app-store luci-compat luci-app-openclash luci-app-passwall2 luci-app-nlbwmon \
+              luci-compat luci-app-openclash luci-app-passwall2 luci-app-nlbwmon \
               luci-app-statistics luci-app-ttyd luci-app-wol luci-app-ddns \
               ddns-scripts htop qmodem luci-app-qmodem-next \
               kmod-usb-net kmod-usb-net-cdc-ether kmod-usb-net-cdc-ncm \
@@ -115,7 +109,6 @@ jobs:
               fi
             done
           } > "$GITHUB_WORKSPACE/output/package-availability.txt"
-          grep -qx 'CONFIG_PACKAGE_luci-app-store=y' .config || { echo "iStore package was not selected"; exit 1; }
           grep -qx 'CONFIG_PACKAGE_luci-compat=y' .config || { echo "luci-compat was not selected"; exit 1; }
 
       - name: Add CPU management LuCI applications (pinned sources)
@@ -183,6 +176,50 @@ jobs:
           } > "$GITHUB_WORKSPACE/output/cpu-management-audit.txt"
           cp .config "$GITHUB_WORKSPACE/output/build.config.resolved"
 
+
+      - name: Enable AN7581 hardware NPU and include firmware
+        working-directory: openwrt
+        run: |
+          set -eu
+          DTS=target/linux/airoha/dts/an7581-nokia_xg-040g-md-ubi.dts
+          PROFILE=target/linux/airoha/image/an7581.mk
+          test -f "$DTS"
+          test -f "$PROFILE"
+          grep -Rqs 'CONFIG_NET_AIROHA_NPU=y' target/linux/airoha
+          grep -Rqs 'compatible = "airoha,en7581-npu"' target/linux/airoha/dts
+          # Enable the NPU node for the Nokia MD DTS.
+          if ! grep -q 'status = "okay";' "$DTS" | grep -q npu; then
+            printf '\\n&npu {\\n\\tstatus = "okay";\\n};\\n' >> "$DTS"
+          fi
+          # Ensure the AN7581 NPU firmware package exists, then add it to the MD profile.
+          grep -Rqs 'airoha-en7581-npu-firmware' package/firmware/linux-firmware
+          python3 - "$PROFILE" <<'PY'
+          from pathlib import Path
+          import sys
+          p=Path(sys.argv[1]); s=p.read_text()
+          key='Device/nokia_xg-040g-md-common'
+          pos=s.find(key)
+          if pos < 0: raise SystemExit('Nokia XG-040G-MD common profile not found')
+          end=s.find('endef', pos)
+          if end < 0: raise SystemExit('profile endef not found')
+          block=s[pos:end]
+          if 'airoha-en7581-npu-firmware' not in block:
+              idx=block.find('DEVICE_PACKAGES')
+              if idx < 0: raise SystemExit('DEVICE_PACKAGES not found in Nokia MD profile')
+              line_end=block.find('\\n', idx)
+              if line_end < 0: line_end=len(block)
+              block=block[:line_end]+' \\\\\n\\tairoha-en7581-npu-firmware'+block[line_end:]
+              s=s[:pos]+block+s[end:]
+              p.write_text(s)
+          PY
+          grep -q 'status = "okay";' "$DTS"
+          grep -q 'airoha-en7581-npu-firmware' "$PROFILE"
+          {
+            echo "AN7581 NPU kernel config: checked"
+            echo "Nokia MD NPU DTS: enabled"
+            echo "NPU firmware package: included in profile"
+          } > "$GITHUB_WORKSPACE/output/npu-hardware-audit.txt"
+
       - name: Download sources
         working-directory: openwrt
         run: make download -j8
@@ -193,7 +230,7 @@ jobs:
           BUILD_JOBS: ${{ inputs.jobs || '2' }}
         run: make -j"${BUILD_JOBS}" V=s
 
-      - name: Collect Nokia XG-040G-MD v3 iStore UBI images and reports
+      - name: Collect Nokia XG-040G-MD v3 NPU UBI images and reports
         if: success()
         run: |
           mkdir -p "$GITHUB_WORKSPACE/output"
@@ -208,7 +245,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: ponwrt-nokia-xg040gmd-v3-istore-ubi
+          name: ponwrt-nokia-xg040gmd-v3-npu-ubi
           path: output/*
           if-no-files-found: error
           retention-days: 14
@@ -217,7 +254,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ponwrt-nokia-xg040gmd-v3-istore-build-diagnostics
+          name: ponwrt-nokia-xg040gmd-v3-npu-build-diagnostics
           path: |
             openwrt/.config
             openwrt/logs/**
