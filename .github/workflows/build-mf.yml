@@ -63,14 +63,15 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           p = Path("target/linux/airoha/image/an7583.mk")
-          s = p.read_text()
-          old = "DEVICE_PACKAGES := kmod-phy-airoha-en8811h \\\n"
-          new = old + "\\tairoha-an7583-npu-firmware \\\n"
-          if "airoha-an7583-npu-firmware" not in s:
-              if old not in s:
+          lines = p.read_text().splitlines(keepends=True)
+          if not any("airoha-an7583-npu-firmware" in line for line in lines):
+              for i, line in enumerate(lines):
+                  if line.startswith("DEVICE_PACKAGES := kmod-phy-airoha-en8811h"):
+                      lines.insert(i + 1, "\\tairoha-an7583-npu-firmware \\\\n")
+                      break
+              else:
                   raise SystemExit("Could not locate MF common DEVICE_PACKAGES line")
-              s = s.replace(old, new, 1)
-              p.write_text(s)
+              p.write_text("".join(lines))
           PY
           # The base AN7583 DTS disables NPU by default; enable it for MF UBI only.
           if ! grep -q '&npu' "$DTS"; then
