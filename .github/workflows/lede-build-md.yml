@@ -95,8 +95,7 @@ jobs:
               luci-app-openclash luci-app-passwall2 luci-app-homeproxy \
               luci-app-nlbwmon nlbwmon luci-app-statistics \
               luci-app-ttyd ttyd luci-app-wol luci-app-ddns ddns-scripts \
-              luci-app-sqm sqm-scripts htop \
-              airoha-en7581-npu-firmware \
+              luci-app-sqm sqm-scripts htop airoha-en7581-npu-firmware \
               qmodem luci-app-qmodem-next \
               kmod-usb-net kmod-usb-net-cdc-ether kmod-usb-net-cdc-ncm \
               kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim kmod-usb-net-rndis \
@@ -120,7 +119,21 @@ jobs:
             echo "::error::AN7581 subtarget was not selected after make defconfig"
             exit 1
           }
-          grep -Eq '^CONFIG_TARGET_DEVICE_.*nokia.*xg.*040g.*md.*ubi=y
+          grep -Eq '^CONFIG_TARGET_DEVICE_.*nokia.*xg.*040g.*md.*ubi=y$' .config || {
+            echo "::error::Nokia XG-040G-MD UBI profile was not selected after make defconfig"
+            echo "Available Nokia profiles:"
+            grep -i 'nokia' .config || true
+            exit 1
+          }
+          grep -qx 'CONFIG_PACKAGE_airoha-en7581-npu-firmware=y' .config || {
+            echo "::error::AN7581 NPU firmware package was not selected"
+            exit 1
+          }
+          grep -qx 'CONFIG_NET_AIROHA_NPU=y' target/linux/airoha/an7581/config-6.18 || {
+            echo "::error::AN7581 kernel config does not enable NET_AIROHA_NPU"
+            exit 1
+          }
+          echo "AN7581 NPU kernel driver and firmware package are enabled."
           {
             echo "Resolved optional package selection:"
             for pkg in \
