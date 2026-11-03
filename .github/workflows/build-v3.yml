@@ -88,8 +88,7 @@ jobs:
               kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim kmod-usb-net-rndis \
               kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan \
               usb-modeswitch uqmi umbim comgt comgt-ncm \
-              luci-proto-qmi luci-proto-mbim luci-proto-ncm \
-              ; do
+              luci-proto-qmi luci-proto-mbim luci-proto-ncm; do
               echo "CONFIG_PACKAGE_${pkg}=y"
             done
           } >> .config
