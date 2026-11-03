@@ -76,7 +76,7 @@ jobs:
               raise SystemExit("Nokia MF common device definition end not found")
           block = "".join(lines[start:end])
           if "airoha-an7583-npu-firmware" not in block:
-              lines.insert(end, "\\tDEVICE_PACKAGES += airoha-an7583-npu-firmware\\n")
+              lines.insert(end, "\tDEVICE_PACKAGES += airoha-an7583-npu-firmware\n")
               p.write_text("".join(lines))
           PY
           # The base AN7583 DTS disables NPU by default; enable it for MF UBI only.
