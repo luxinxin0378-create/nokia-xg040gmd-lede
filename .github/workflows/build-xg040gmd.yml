@@ -94,6 +94,18 @@ jobs:
         working-directory: openwrt
         run: make download -j8
 
+      - name: Patch legacy LuCI CMake minimum version
+        working-directory: openwrt
+        run: |
+          FILE="feeds/luci/contrib/package/lucihttp/CMakeLists.txt"
+          if [ -f "$FILE" ]; then
+            sed -i -E "s/cmake_minimum_required\\(VERSION[[:space:]]+[0-9.]+/cmake_minimum_required(VERSION 3.5/" "$FILE"
+            head -n 3 "$FILE"
+          else
+            echo "Expected LuCI http CMakeLists.txt not found: $FILE"
+            exit 1
+          fi
+
       - name: Compile firmware
         working-directory: openwrt
         run: |
