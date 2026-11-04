@@ -41,6 +41,8 @@ jobs:
           cd openwrt
           cp "$GITHUB_WORKSPACE/lede-config.seed" .config
           cat "$GITHUB_WORKSPACE/lede-feeds.conf" >> feeds.conf.default
+          # Add the light-blue Design LuCI theme for Lean LEDE.
+          echo "src-git design https://github.com/kenzok78/luci-theme-design.git" >> feeds.conf.default
           grep -q 'Device/nokia_xg-040g-md-ubi' target/linux/airoha/image/an7581.mk
           MD_DTS=target/linux/airoha/dts/an7581-nokia_xg-040g-md-ubi.dts
           test -f "$MD_DTS"
@@ -169,6 +171,21 @@ jobs:
             done
           } > "$GITHUB_WORKSPACE/output/package-availability.txt"
           cp .config "$GITHUB_WORKSPACE/output/build.config.resolved"
+
+      - name: Set light-blue Design LuCI theme as default
+        working-directory: openwrt
+        run: |
+          # Keep Argon available as an optional theme, but boot into Design.
+          grep -qx 'CONFIG_PACKAGE_luci-theme-design=y' .config
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/97-luci-theme-design <<'EOF'
+          #!/bin/sh
+          # Select the light Design theme on first boot.
+          uci -q set luci.main.mediaurlbase='/luci-static/design'
+          uci -q commit luci
+          exit 0
+          EOF
+          chmod 0755 files/etc/uci-defaults/97-luci-theme-design
 
       - name: Enable hardware flow offloading defaults
         working-directory: openwrt
