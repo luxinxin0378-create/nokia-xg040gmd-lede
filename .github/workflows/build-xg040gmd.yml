@@ -94,11 +94,23 @@ jobs:
         run: |
           make -j"$(nproc)" || make -j1 V=s
 
+      - name: Stamp firmware filenames (Beijing time)
+        working-directory: openwrt
+        run: |
+          STAMP="$(date +'%Y%m%d-%H%M%S')"
+          echo "BUILD_STAMP=$STAMP" >> "$GITHUB_ENV"
+          echo "Build completed: $(date +'%Y-%m-%d %H:%M:%S %Z')" >> build-config-check.txt
+          find bin/targets/airoha/an7581 -type f \( -name '*.bin' -o -name '*.img' -o -name '*.itb' \) -print0 | while IFS= read -r -d '' f; do
+            ext="${f##*.}"
+            base="${f%.*}"
+            mv "$f" "${base}-${STAMP}.${ext}"
+          done
+
       - name: Upload firmware and build evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xg040gmd-build-${{ github.run_number }}
+          name: XG-040G-MD-LEDE-${{ env.BUILD_STAMP }}
           path: |
             openwrt/bin/targets/airoha/an7581/
             openwrt/build-config-check.txt
