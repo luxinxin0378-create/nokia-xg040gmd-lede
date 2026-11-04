@@ -41,8 +41,8 @@ jobs:
           cd openwrt
           cp "$GITHUB_WORKSPACE/lede-config.seed" .config
           cat "$GITHUB_WORKSPACE/lede-feeds.conf" >> feeds.conf.default
-          # Add the light-blue Design LuCI theme for Lean LEDE.
-          echo "src-git design https://github.com/kenzok78/luci-theme-design.git" >> feeds.conf.default
+          # luci-theme-design is already provided by the upstream Lean luci feed.
+          # Avoid the unavailable external design feed that caused feed update to fail.
           grep -q 'Device/nokia_xg-040g-md-ubi' target/linux/airoha/image/an7581.mk
           MD_DTS=target/linux/airoha/dts/an7581-nokia_xg-040g-md-ubi.dts
           test -f "$MD_DTS"
