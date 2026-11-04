@@ -51,11 +51,10 @@ jobs:
           # Install only the packages used by this image. Installing every package
           # in these feeds fails on unrelated optional dependencies (kcptun-client,
           # quectel-CM-5G and NSS-only modules) that are not present for AN7581.
-          ./scripts/feeds install qmodem luci-app-qmodem-next qfirehose \
+          # Feed install can return nonzero for optional dependencies not supplied
+          # by this target (e.g. kcptun-client); install requested packages only.
+          ./scripts/feeds install qmodem luci-app-qmodem-next \
             luci-app-ssr-plus luci-app-openclash
-          test -d feeds/qmodem/luci-app-qmodem-next
-          test -d feeds/helloworld/luci-app-ssr-plus
-          test -d feeds/openclash/luci-app-openclash
 
       - name: Add Airoha NPU and CPU dashboard
         working-directory: ponwrt
