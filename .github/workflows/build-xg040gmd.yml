@@ -37,13 +37,11 @@ jobs:
           cd openwrt
           echo "SOURCE_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           grep -nE 'CONFIG_NET_AIROHA(=|_NPU=)' target/linux/airoha/an7581/config-* || true
-          grep -nE 'airoha-en7581-npu-firmware|kmod-airoha-(eth|npu)' target/linux/airoha/an7581/target.mk
+          grep -nE 'airoha-en7581-npu-firmware|kmod-airoha-(eth|npu)' target/linux/airoha/an7581/target.mk || true
 
       - name: Pin LuCI feed to compatible stable branch
         working-directory: openwrt
         run: |
-          # The source tree carries ucode 2026.01, while current LuCI master
-          # requires ucode 2026.02+. Keep LuCI on the matching 24.10 stable line.
           sed -i 's|^src-git luci .*|src-git luci https://git.openwrt.org/project/luci.git;openwrt-24.10|' feeds.conf.default
           grep '^src-git luci ' feeds.conf.default
 
@@ -56,7 +54,7 @@ jobs:
       - name: Configure Nokia XG-040G-MD
         working-directory: openwrt
         run: |
-          cat > .config <<'EOF'
+          cat > .config <<'EOF_CONFIG'
           CONFIG_TARGET_airoha=y
           CONFIG_TARGET_airoha_an7581=y
           CONFIG_TARGET_airoha_an7581_DEVICE_bell_xg-040g-md=y
@@ -79,7 +77,6 @@ jobs:
           CONFIG_PACKAGE_kmod-usb-serial-wwan=y
           CONFIG_PACKAGE_kmod-usb-serial-qualcomm=y
           CONFIG_PACKAGE_kmod-usb-serial-sierrawireless=y
-          CONFIG_PACKAGE_kmod-usb-serial-wwan=y
           CONFIG_PACKAGE_usb-modeswitch=y
           CONFIG_PACKAGE_usbutils=y
           CONFIG_PACKAGE_ethtool=y
@@ -87,49 +84,11 @@ jobs:
           CONFIG_PACKAGE_wget-ssl=y
           CONFIG_PACKAGE_ca-bundle=y
           CONFIG_PACKAGE_luci-app-opkg=y
-          EOF
+          EOF_CONFIG
           make defconfig
-          if grep -Eq '^CONFIG_PACKAGE_luci(-base|-mod-status|-theme-bootstrap)?=y 'CONFIG_TARGET_airoha_an7581_DEVICE_bell_xg-040g-md=y|CONFIG_PACKAGE_(airoha-en7581-npu-firmware|kmod-airoha-eth|kmod-airoha-npu)=y|CONFIG_NET_AIROHA(=m|_NPU=m)' .config | tee build-config-check.txt
-          grep -q 'CONFIG_TARGET_airoha_an7581_DEVICE_bell_xg-040g-md=y' .config
-          grep -q 'CONFIG_PACKAGE_airoha-en7581-npu-firmware=y' .config
-
-      - name: Download sources
-        working-directory: openwrt
-        run: make download -j8
-
-      - name: Compile firmware
-        working-directory: openwrt
-        run: |
-          make -j"$(nproc)" || make -j1 V=s
-
-      - name: Stamp firmware filenames (Beijing time)
-        working-directory: openwrt
-        run: |
-          STAMP="$(date +'%Y%m%d-%H%M%S')"
-          echo "BUILD_STAMP=$STAMP" >> "$GITHUB_ENV"
-          echo "Build completed: $(date +'%Y-%m-%d %H:%M:%S %Z')" >> build-config-check.txt
-          find bin/targets/airoha/an7581 -type f \( -name '*.bin' -o -name '*.img' -o -name '*.itb' \) -print0 | while IFS= read -r -d '' f; do
-            ext="${f##*.}"
-            base="${f%.*}"
-            mv "$f" "${base}-${STAMP}.${ext}"
-          done
-
-      - name: Upload firmware and build evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: XG-040G-MD-LEDE-${{ env.BUILD_STAMP }}
-          path: |
-            openwrt/bin/targets/airoha/an7581/
-            openwrt/build-config-check.txt
-          if-no-files-found: warn
- .config; then
-            UCODE_REQ="$(grep -RhoE 'ucode[><=]+[0-9.]{8,}' feeds/luci/modules/luci-base/Makefile 2>/dev/null | sort -u | tr '\\n' ' ')"
-            echo "LuCI ucode dependency declarations: ${UCODE_REQ:-not found}"
-          fi
           grep -E 'CONFIG_TARGET_airoha_an7581_DEVICE_bell_xg-040g-md=y|CONFIG_PACKAGE_(airoha-en7581-npu-firmware|kmod-airoha-eth|kmod-airoha-npu)=y|CONFIG_NET_AIROHA(=m|_NPU=m)' .config | tee build-config-check.txt
-          grep -q 'CONFIG_TARGET_airoha_an7581_DEVICE_bell_xg-040g-md=y' .config
-          grep -q 'CONFIG_PACKAGE_airoha-en7581-npu-firmware=y' .config
+          grep -q '^CONFIG_TARGET_airoha_an7581_DEVICE_bell_xg-040g-md=y$' .config
+          grep -q '^CONFIG_PACKAGE_airoha-en7581-npu-firmware=y$' .config
 
       - name: Download sources
         working-directory: openwrt
@@ -156,7 +115,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: XG-040G-MD-LEDE-${{ env.BUILD_STAMP }}
+          name: XG-040G-MD-LEDE-${{ env.BUILD_STAMP || 'BUILDING' }}
           path: |
             openwrt/bin/targets/airoha/an7581/
             openwrt/build-config-check.txt
