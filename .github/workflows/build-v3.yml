@@ -1,0 +1,277 @@
+name: Nokia XG-040G-MD PonWrt Firmware v3 (NPU)
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: "Parallel compile jobs (2 is safest for memory)"
+        required: true
+        type: choice
+        options: ["2", "3", "4"]
+        default: "2"
+  push:
+    paths:
+      - ".github/workflows/build-v3.yml"
+      - "feeds.conf.add"
+      - "config.seed"
+      - "scripts/**"
+      - "README.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nokia-xg040gmd-ponwrt-v3-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout build overlay
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint \
+            binutils bison build-essential bzip2 ccache clang cmake cpio curl \
+            device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
+            g++-multilib git gnutls-dev gperf haveged help2man intltool \
+            lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm \
+            lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf \
+            python3 python3-pip python3-ply python3-docutils python3-pyelftools \
+            qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo \
+            uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+
+      - name: Clone PonWrt and select Nokia profile
+        run: |
+          git clone --depth=1 https://github.com/pbs05/ponwrt.git openwrt
+          cd openwrt
+          cp configs/an7581.config .config
+          if [ -f "$GITHUB_WORKSPACE/feeds.conf.add" ]; then
+            cat "$GITHUB_WORKSPACE/feeds.conf.add" >> feeds.conf.default
+          else
+            echo "No feeds.conf.add overlay present; using PonWrt upstream feeds.conf.default"
+          fi
+          grep -q 'Device/nokia_xg-040g-md-ubi' target/linux/airoha/image/an7581.mk
+          grep -q '^CONFIG_TARGET_airoha_an7581=y$' .config
+          grep -q '^CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg-040g-md-ubi=y$' .config
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          {
+            echo "Source: https://github.com/pbs05/ponwrt"
+            echo "Base: ImmortalWrt"
+            echo "Target: airoha/an7581"
+            echo "Profile: nokia_xg-040g-md-ubi"
+            echo "PonWrt upstream config: configs/an7581.config"
+            echo "Nokia profile is enabled in upstream AN7581 multi-profile config."
+          } > "$GITHUB_WORKSPACE/output/source-profile-audit.txt"
+
+      - name: Update and install feeds
+        working-directory: openwrt
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Add optional router packages
+        working-directory: openwrt
+        run: |
+          # Keep the PonWrt upstream AN7581 profile and request the selected extras.
+          {
+            echo 'CONFIG_PACKAGE_luci=y'
+            echo 'CONFIG_PACKAGE_luci-compat=y'
+            echo 'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y'
+            for pkg in \
+              luci-compat luci-app-openclash luci-app-passwall2 luci-app-nlbwmon \
+              luci-app-statistics luci-app-ttyd luci-app-wol luci-app-ddns \
+              ddns-scripts htop qmodem luci-app-qmodem-next \
+              kmod-usb-net kmod-usb-net-cdc-ether kmod-usb-net-cdc-ncm \
+              kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim kmod-usb-net-rndis \
+              kmod-usb-serial kmod-usb-serial-option kmod-usb-serial-wwan \
+              usb-modeswitch uqmi umbim comgt comgt-ncm \
+              luci-proto-qmi luci-proto-mbim luci-proto-ncm; do
+              echo "CONFIG_PACKAGE_${pkg}=y"
+            done
+          } >> .config
+          make defconfig
+          grep -qx 'CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg-040g-md-ubi=y' .config
+          {
+            echo "Optional package resolution:"
+            for pkg in \
+              luci-app-openclash luci-app-passwall2 luci-app-nlbwmon \
+              luci-app-statistics luci-app-ttyd luci-app-wol luci-app-ddns \
+              qmodem luci-app-qmodem-next kmod-usb-net-qmi-wwan \
+              kmod-usb-net-cdc-mbim luci-proto-qmi luci-proto-mbim; do
+              if grep -qx "CONFIG_PACKAGE_${pkg}=y" .config; then
+                echo "ENABLED ${pkg}"
+              else
+                echo "UNAVAILABLE_OR_DEPENDENCY_MISSING ${pkg}"
+              fi
+            done
+          } > "$GITHUB_WORKSPACE/output/package-availability.txt"
+          grep -qx 'CONFIG_PACKAGE_luci-compat=y' .config || { echo "luci-compat was not selected"; exit 1; }
+
+      - name: Add CPU management LuCI applications (pinned sources)
+        working-directory: openwrt
+        run: |
+          set -eu
+          git clone https://github.com/openwrt-xiaomi/luci-app-cpufreq.git package/luci-app-cpufreq
+          git -C package/luci-app-cpufreq checkout 7910f1ff8d964d8bc168d9559034adbbac5b3729
+
+          git clone https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
+          git -C package/luci-app-airoha-npu checkout 14521b8414da1e98517a295d8ec267087c7dde8e
+
+          # Enable the NPU dashboard's manual PLL overclock controls.
+          # No overclock is applied automatically at boot; the user must opt in from LuCI.
+          # Remove the broad target gate: this workflow is already pinned to AN7581.
+          sed -i 's/@TARGET_airoha//g; s/[[:space:]]*$//' package/luci-app-airoha-npu/Makefile
+          # Validate the dependency line by content, not brittle exact whitespace.
+          dep_line="$(grep '^LUCI_DEPENDS:=' package/luci-app-airoha-npu/Makefile)"
+          echo "NPU package dependency after target-gate removal: $dep_line"
+          printf '%s\n' "$dep_line" | grep -q '+luci-base' || {
+            echo '::error::NPU package lost its luci-base dependency'
+            exit 1
+          }
+          printf '%s\n' "$dep_line" | grep -q '@TARGET_airoha' && {
+            echo '::error::NPU LuCI target gate is still present'
+            exit 1
+          } || true
+
+          {
+            echo 'CONFIG_PACKAGE_luci-app-cpufreq=y'
+            echo 'CONFIG_PACKAGE_luci-app-airoha-npu=y'
+          } >> .config
+          make defconfig
+          grep -qx 'CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg-040g-md-ubi=y' .config
+
+          # This locally cloned LuCI package is not part of the installed feeds' Kconfig
+          # index yet, so defconfig may prune its symbol. Re-assert selections after
+          # defconfig; the package Makefile is present and the build system will compile it.
+          for symbol in CONFIG_PACKAGE_luci-app-cpufreq CONFIG_PACKAGE_luci-app-airoha-npu; do
+            if ! grep -qx "${symbol}=y" .config; then
+              sed -i "/^${symbol}=/d" .config
+              echo "${symbol}=y" >> .config
+            fi
+          done
+          grep -qx 'CONFIG_PACKAGE_luci-app-airoha-npu=y' .config || {
+            echo "::error::Could not preserve luci-app-airoha-npu selection."
+            exit 1
+          }
+
+          # Expose /dev/mem to the NPU dashboard for user-triggered PLL control.
+          echo 'CONFIG_KERNEL_DEVMEM=y' >> .config
+          echo 'CONFIG_BUSYBOX_CONFIG_DEVMEM=y' >> .config
+          grep -qx 'CONFIG_KERNEL_DEVMEM=y' .config
+          grep -qx 'CONFIG_BUSYBOX_CONFIG_DEVMEM=y' .config
+          test -f package/luci-app-airoha-npu/root/usr/share/luci/menu.d/luci-app-airoha-npu.json
+          test -f package/luci-app-airoha-npu/htdocs/luci-static/resources/view/airoha_npu/status.js
+          grep -q '"admin/status/npu"' package/luci-app-airoha-npu/root/usr/share/luci/menu.d/luci-app-airoha-npu.json
+          grep -q '"path": "airoha_npu/status"' package/luci-app-airoha-npu/root/usr/share/luci/menu.d/luci-app-airoha-npu.json
+
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/99-cpufreq-schedutil <<'EOF'
+          #!/bin/sh
+          p=/sys/devices/system/cpu/cpufreq/policy0
+          [ -w "$p/scaling_governor" ] || exit 0
+          avail="$(cat "$p/scaling_available_governors" 2>/dev/null)"
+          case " $avail " in
+            *" schedutil "*) echo schedutil > "$p/scaling_governor" ;;
+            *) logger -t cpufreq-default "schedutil unavailable; keep kernel default" ;;
+          esac
+          exit 0
+          EOF
+          chmod 0755 files/etc/uci-defaults/99-cpufreq-schedutil
+          {
+            echo "CPU frequency UI: luci-app-cpufreq"
+            echo "NPU LuCI page: verified"
+            echo "PLL overclock controls: enabled for manual use; no automatic overclock at boot"
+          } > "$GITHUB_WORKSPACE/output/cpu-management-audit.txt"
+          cp .config "$GITHUB_WORKSPACE/output/build.config.resolved"
+
+      - name: Enable AN7581 hardware NPU and include firmware
+        working-directory: openwrt
+        run: |
+          set -eu
+          DTS=target/linux/airoha/dts/an7581-nokia_xg-040g-md-ubi.dts
+          PROFILE=target/linux/airoha/image/an7581.mk
+          test -f "$DTS"
+          test -f "$PROFILE"
+          grep -Rqs 'CONFIG_NET_AIROHA_NPU=y' target/linux/airoha
+          grep -Rqs 'compatible = "airoha,en7581-npu"' target/linux/airoha/dts
+          # Activate the NPU node only once.
+          if ! grep -Eq '&npu[[:space:]]*\{|status = "okay";' "$DTS"; then
+            printf '\n&npu {\n\tstatus = "okay";\n};\n' >> "$DTS"
+          elif ! grep -q '&npu' "$DTS"; then
+            printf '\n&npu {\n\tstatus = "okay";\n};\n' >> "$DTS"
+          fi
+          grep -Rqs 'airoha-en7581-npu-firmware' package/firmware/linux-firmware
+          python3 - "$PROFILE" <<'PY'
+          from pathlib import Path
+          import sys
+          p = Path(sys.argv[1])
+          lines = p.read_text().splitlines(keepends=True)
+          start = next((i for i, line in enumerate(lines)
+                        if line.startswith("define Device/nokia_xg-040g-md-common")), None)
+          if start is None:
+              raise SystemExit("Nokia MD common profile not found")
+          end = next((i for i in range(start + 1, len(lines))
+                      if lines[i].strip() == "endef"), None)
+          if end is None:
+              raise SystemExit("Nokia MD profile endef not found")
+          block = "".join(lines[start:end])
+          if "airoha-en7581-npu-firmware" not in block:
+              lines.insert(end, "\tDEVICE_PACKAGES += airoha-en7581-npu-firmware\n")
+              p.write_text("".join(lines))
+          PY
+          grep -q '&npu' "$DTS"
+          grep -q 'status = "okay";' "$DTS"
+          grep -q 'airoha-en7581-npu-firmware' "$PROFILE"
+          {
+            echo "AN7581 NPU kernel config: checked"
+            echo "Nokia MD NPU DTS: enabled"
+            echo "NPU firmware package: included in profile"
+          } > "$GITHUB_WORKSPACE/output/npu-hardware-audit.txt"
+
+      - name: Download sources
+        working-directory: openwrt
+        run: make download -j8
+
+      - name: Compile PonWrt firmware
+        working-directory: openwrt
+        env:
+          BUILD_JOBS: ${{ inputs.jobs || '2' }}
+        run: make -j"${BUILD_JOBS}" V=s
+
+      - name: Collect Nokia XG-040G-MD v3 NPU UBI images and reports
+        if: success()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          find openwrt/bin/targets/airoha/an7581 -maxdepth 1 -type f \
+            \( -iname '*nokia_xg-040g-md-ubi*' -o -iname '*nokia_xg-040g-md*manifest' \) \
+            -exec cp -v {} "$GITHUB_WORKSPACE/output/" \;
+          cp openwrt/.config "$GITHUB_WORKSPACE/output/build.config"
+          cp openwrt/feeds.conf.default "$GITHUB_WORKSPACE/output/feeds.conf.default"
+          test -n "$(find "$GITHUB_WORKSPACE/output" -maxdepth 1 -type f -iname '*nokia_xg-040g-md-ubi*' -print -quit)"
+
+      - name: Upload firmware artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PonWrt-V3-XG040GMD-NPU
+          path: output/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PonWrt-V3-XG040GMD-NPU-Diagnostics
+          path: |
+            openwrt/.config
+            openwrt/logs/**
+          if-no-files-found: ignore
+          retention-days: 7
