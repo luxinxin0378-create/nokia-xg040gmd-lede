@@ -140,8 +140,18 @@ jobs:
           } >> .config
           make defconfig
           grep -qx 'CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_nokia_xg-040g-md-ubi=y' .config
+
+          # This locally cloned LuCI package is not part of the installed feeds' Kconfig
+          # index yet, so defconfig may prune its symbol. Re-assert selections after
+          # defconfig; the package Makefile is present and the build system will compile it.
+          for symbol in CONFIG_PACKAGE_luci-app-cpufreq CONFIG_PACKAGE_luci-app-airoha-npu; do
+            if ! grep -qx "${symbol}=y" .config; then
+              sed -i "/^${symbol}=/d" .config
+              echo "${symbol}=y" >> .config
+            fi
+          done
           grep -qx 'CONFIG_PACKAGE_luci-app-airoha-npu=y' .config || {
-            echo "::error::luci-app-airoha-npu was dropped by Kconfig; refusing to build without the NPU page."
+            echo "::error::Could not preserve luci-app-airoha-npu selection."
             exit 1
           }
           test -f package/luci-app-airoha-npu/root/usr/share/luci/menu.d/luci-app-airoha-npu.json
