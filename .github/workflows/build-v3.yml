@@ -120,23 +120,8 @@ jobs:
           git clone https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
           git -C package/luci-app-airoha-npu checkout 14521b8414da1e98517a295d8ec267087c7dde8e
 
-          # Disable direct PLL writes by default; keep CPU governor/frequency UI.
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("package/luci-app-airoha-npu/root/usr/libexec/rpcd/luci.airoha_npu")
-          s = p.read_text()
-          start = s.index("set_overclock() {")
-          end = s.index("\\n}\\n", start) + 3
-          replacement = """set_overclock() {
-          \techo '{"error":"PLL overclock is disabled by firmware build policy"}'
-          }
-          """
-          s = s[:start] + replacement + s[end:]
-          if 'configure_armpll "$soc"' in s:
-              raise SystemExit("PLL write path was not removed")
-          p.write_text(s)
-          PY
-
+          # Enable the NPU dashboard's manual PLL overclock controls.
+          # No overclock is applied automatically at boot; the user must opt in from LuCI.
           # Remove the broad target gate: this workflow is already pinned to AN7581.
           sed -i 's/@TARGET_airoha//g; s/[[:space:]]*$//' package/luci-app-airoha-npu/Makefile
           # Validate the dependency line by content, not brittle exact whitespace.
@@ -171,6 +156,12 @@ jobs:
             echo "::error::Could not preserve luci-app-airoha-npu selection."
             exit 1
           }
+
+          # Expose /dev/mem to the NPU dashboard for user-triggered PLL control.
+          echo 'CONFIG_KERNEL_DEVMEM=y' >> .config
+          echo 'CONFIG_BUSYBOX_CONFIG_DEVMEM=y' >> .config
+          grep -qx 'CONFIG_KERNEL_DEVMEM=y' .config
+          grep -qx 'CONFIG_BUSYBOX_CONFIG_DEVMEM=y' .config
           test -f package/luci-app-airoha-npu/root/usr/share/luci/menu.d/luci-app-airoha-npu.json
           test -f package/luci-app-airoha-npu/htdocs/luci-static/resources/view/airoha_npu/status.js
           grep -q '"admin/status/npu"' package/luci-app-airoha-npu/root/usr/share/luci/menu.d/luci-app-airoha-npu.json
@@ -192,7 +183,7 @@ jobs:
           {
             echo "CPU frequency UI: luci-app-cpufreq"
             echo "NPU LuCI page: verified"
-            echo "PLL overclock: disabled by build policy; CPU governor/frequency controls retained"
+            echo "PLL overclock controls: enabled for manual use; no automatic overclock at boot"
           } > "$GITHUB_WORKSPACE/output/cpu-management-audit.txt"
           cp .config "$GITHUB_WORKSPACE/output/build.config.resolved"
 
