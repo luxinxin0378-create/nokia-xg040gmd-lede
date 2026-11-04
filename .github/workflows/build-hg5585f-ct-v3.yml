@@ -48,10 +48,11 @@ jobs:
           src-git openclash https://github.com/vernesong/OpenClash.git;master
           EOF
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
-          ./scripts/feeds install -a -p qmodem
-          ./scripts/feeds install -a -p helloworld
-          ./scripts/feeds install -a -p openclash
+          # Install only the packages used by this image. Installing every package
+          # in these feeds fails on unrelated optional dependencies (kcptun-client,
+          # quectel-CM-5G and NSS-only modules) that are not present for AN7581.
+          ./scripts/feeds install qmodem luci-app-qmodem-next qfirehose \
+            luci-app-ssr-plus luci-app-openclash
           test -d feeds/qmodem/luci-app-qmodem-next
           test -d feeds/helloworld/luci-app-ssr-plus
           test -d feeds/openclash/luci-app-openclash
