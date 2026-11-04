@@ -121,11 +121,18 @@ jobs:
           git -C package/luci-app-airoha-npu checkout 14521b8414da1e98517a295d8ec267087c7dde8e
 
           # Remove the broad target gate: this workflow is already pinned to AN7581.
-          sed -i 's/@TARGET_airoha//g' package/luci-app-airoha-npu/Makefile
-          grep -q '^LUCI_DEPENDS:=+luci-base$' package/luci-app-airoha-npu/Makefile || {
-            echo '::error::Failed to remove NPU LuCI target gate'
+          sed -i 's/@TARGET_airoha//g; s/[[:space:]]*$//' package/luci-app-airoha-npu/Makefile
+          # Validate the dependency line by content, not brittle exact whitespace.
+          dep_line="$(grep '^LUCI_DEPENDS:=' package/luci-app-airoha-npu/Makefile)"
+          echo "NPU package dependency after target-gate removal: $dep_line"
+          printf '%s\n' "$dep_line" | grep -q '+luci-base' || {
+            echo '::error::NPU package lost its luci-base dependency'
             exit 1
           }
+          printf '%s\n' "$dep_line" | grep -q '@TARGET_airoha' && {
+            echo '::error::NPU LuCI target gate is still present'
+            exit 1
+          } || true
 
           {
             echo 'CONFIG_PACKAGE_luci-app-cpufreq=y'
