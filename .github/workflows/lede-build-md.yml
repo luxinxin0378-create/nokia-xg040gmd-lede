@@ -176,7 +176,114 @@ jobs:
         working-directory: openwrt
         run: |
           # Keep Argon available as an optional theme, but boot into Design.
-          grep -qx 'CONFIG_PACKAGE_luci-theme-design=y' .config
+          grep -Eq '^CONFIG_PACKAGE_luci-theme-design=(y|m)
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/97-luci-theme-design <<'EOF'
+          #!/bin/sh
+          # Select the light Design theme on first boot.
+          uci -q set luci.main.mediaurlbase='/luci-static/design'
+          uci -q commit luci
+          exit 0
+          EOF
+          chmod 0755 files/etc/uci-defaults/97-luci-theme-design
+
+      - name: Enable hardware flow offloading defaults
+        working-directory: openwrt
+        run: |
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/98-enable-hw-offload <<'EOF'
+          #!/bin/sh
+          # Enable OpenWrt firewall flow offloading and hardware offload on AN7581.
+          uci -q set firewall.@defaults[0].flow_offloading='1'
+          uci -q set firewall.@defaults[0].flow_offloading_hw='1'
+          uci -q commit firewall
+          exit 0
+          EOF
+          chmod 0755 files/etc/uci-defaults/98-enable-hw-offload
+
+      - name: Add safe CPU governor default
+        working-directory: openwrt
+        run: |
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/99-cpufreq-schedutil <<'EOF'
+          #!/bin/sh
+          p=/sys/devices/system/cpu/cpufreq/policy0
+          [ -w "$p/scaling_governor" ] || exit 0
+          avail="$(cat "$p/scaling_available_governors" 2>/dev/null)"
+          case " $avail " in
+            *" schedutil "*) echo schedutil > "$p/scaling_governor" ;;
+            *) logger -t cpufreq-default "schedutil unavailable; keep kernel default" ;;
+          esac
+          exit 0
+          EOF
+          chmod 0755 files/etc/uci-defaults/99-cpufreq-schedutil
+
+      - name: Download sources
+        working-directory: openwrt
+        run: make download -j8
+
+      - name: Patch Quectel QMI WWAN for Linux 6.18 hrtimer API
+        working-directory: openwrt
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("package/wwan/driver/quectel_QMI_WWAN/src/qmi_wwan_q.c")
+          s = p.read_text()
+          old = "\thrtimer_init(&priv->agg_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);\n\tpriv->agg_hrtimer.function = rmnet_usb_tx_agg_timer_cb;"
+          new = "\thrtimer_setup(&priv->agg_hrtimer, rmnet_usb_tx_agg_timer_cb, HRTIMER_MODE_REL, CLOCK_MONOTONIC);"
+          if new in s:
+              print("Quectel QMI WWAN hrtimer API patch already applied.")
+          elif old in s:
+              p.write_text(s.replace(old, new, 1))
+              print("Patched legacy hrtimer_init to hrtimer_setup.")
+          else:
+              raise SystemExit("Expected Quectel hrtimer initialization block not found; stop rather than apply an unsafe patch.")
+          PY
+          grep -n -A2 -B2 'hrtimer_setup' package/wwan/driver/quectel_QMI_WWAN/src/qmi_wwan_q.c
+
+      - name: Compile firmware
+        working-directory: openwrt
+        run: make -j2 V=s
+
+      - name: Collect firmware and reports
+        if: success()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          find openwrt/bin/targets/airoha/an7581 -maxdepth 1 -type f \
+            \( -iname '*nokia_xg-040g-md-ubi*' -o -iname '*nokia_xg-040g-md*manifest' \) \
+            -exec cp -v {} "$GITHUB_WORKSPACE/output/" \;
+          # Mark the distributed firmware image filenames as NPU-enabled.
+          for image in "$GITHUB_WORKSPACE"/output/*.itb; do
+            [ -f "$image" ] || continue
+            base="${image%.itb}"
+            case "$base" in *-NPU) ;; *) mv "$image" "${base}-NPU.itb" ;; esac
+          done
+          cp openwrt/.config "$GITHUB_WORKSPACE/output/build.config"
+          cp openwrt/feeds.conf.default "$GITHUB_WORKSPACE/output/feeds.conf.default"
+          test -n "$(find "$GITHUB_WORKSPACE/output" -maxdepth 1 -type f -iname '*nokia_xg-040g-md-ubi*NPU*.itb' -print -quit)"
+          ls -lh "$GITHUB_WORKSPACE/output"
+
+      - name: Upload firmware
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lede-nokia-xg040gmd-ubi-npu-firmware
+          path: output/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lede-nokia-xg040gmd-npu-build-diagnostics
+          path: |
+            openwrt/.config
+            openwrt/logs/**
+            output/**
+          if-no-files-found: ignore
+          retention-days: 7
+ .config
           mkdir -p files/etc/uci-defaults
           cat > files/etc/uci-defaults/97-luci-theme-design <<'EOF'
           #!/bin/sh
