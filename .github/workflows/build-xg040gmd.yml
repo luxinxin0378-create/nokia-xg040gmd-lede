@@ -97,14 +97,16 @@ jobs:
       - name: Patch legacy LuCI CMake minimum version
         working-directory: openwrt
         run: |
-          FILE="feeds/luci/contrib/package/lucihttp/CMakeLists.txt"
-          if [ -f "$FILE" ]; then
-            sed -i -E "s/cmake_minimum_required\\(VERSION[[:space:]]+[0-9.]+/cmake_minimum_required(VERSION 3.5/" "$FILE"
-            head -n 3 "$FILE"
-          else
-            echo "Expected LuCI http CMakeLists.txt not found: $FILE"
+          mapfile -t FILES < <(find build_dir -type f -path "*lucihttp*/CMakeLists.txt" -print)
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "No extracted lucihttp CMakeLists.txt found under build_dir"
+            find build_dir -maxdepth 4 -iname "*lucihttp*" -print | head -n 50
             exit 1
           fi
+          for FILE in "${FILES[@]}"; do
+            sed -i -E "s/cmake_minimum_required\\(VERSION[[:space:]]+[0-9.]+/cmake_minimum_required(VERSION 3.5/" "$FILE"
+            head -n 3 "$FILE"
+          done
 
       - name: Compile firmware
         working-directory: openwrt
