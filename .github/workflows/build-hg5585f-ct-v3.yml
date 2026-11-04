@@ -1,0 +1,132 @@
+name: PonWrt V3 - FiberHome HG5585F CT Enhanced
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-hg5585f-ct-v3.yml"
+      - "README-HG5585F-CT.md"
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_REPO: https://github.com/pbs05/ponwrt.git
+  SOURCE_BRANCH: master
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout build overlay
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ack asciidoc autoconf automake autopoint binutils bison \
+            build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler flex \
+            gawk gettext gcc-multilib g++-multilib git gperf libelf-dev libncurses-dev \
+            libssl-dev python3-dev python3-pip python3-setuptools python3-ply rsync \
+            scons squashfs-tools swig unzip wget zlib1g-dev zstd file
+
+      - name: Clone PonWrt and select HG5585F CT profile
+        run: |
+          git clone --depth 1 --branch "$SOURCE_BRANCH" "$SOURCE_REPO" ponwrt
+          cd ponwrt
+          echo "PONWRT_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          grep -q 'TARGET_DEVICES += fiberhome_hg5585f-ct' target/linux/airoha/image/an7581.mk
+
+      - name: Update feeds and install selected packages
+        working-directory: ponwrt
+        run: |
+          cat >> feeds.conf.default <<'EOF'
+          src-git qmodem https://github.com/FUjr/QModem.git;main
+          src-git helloworld https://github.com/fw876/helloworld.git;dev
+          src-git openclash https://github.com/vernesong/OpenClash.git;master
+          EOF
+          ./scripts/feeds update -a
+          ./scripts/feeds install qmodem luci-app-qmodem-next luci-app-ssr-plus luci-app-openclash
+
+      - name: Add Airoha NPU and CPU dashboard
+        working-directory: ponwrt
+        run: |
+          git clone --depth 1 https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
+          test -f package/luci-app-airoha-npu/Makefile
+          grep -q 'LUCI_TITLE:=LuCI Airoha SoC Status' package/luci-app-airoha-npu/Makefile
+
+      - name: Configure HG5585F CT enhanced firmware
+        working-directory: ponwrt
+        run: |
+          cp configs/an7581.config .config
+          cat >> .config <<'EOF'
+          CONFIG_TARGET_airoha_an7581_DEVICE_fiberhome_hg5585f-ct=y
+          CONFIG_PACKAGE_luci-app-openclash=y
+          CONFIG_PACKAGE_luci-app-ssr-plus=y
+          CONFIG_PACKAGE_qmodem=y
+          CONFIG_PACKAGE_luci-app-qmodem-next=y
+          CONFIG_PACKAGE_luci-app-airoha-npu=y
+          CONFIG_PACKAGE_kmod-usb2=y
+          CONFIG_PACKAGE_kmod-usb3=y
+          CONFIG_PACKAGE_kmod-usb-serial=y
+          CONFIG_PACKAGE_kmod-usb-serial-option=y
+          CONFIG_PACKAGE_kmod-usb-serial-wwan=y
+          CONFIG_PACKAGE_kmod-usb-net=y
+          CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
+          CONFIG_PACKAGE_kmod-usb-net-rndis=y
+          CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y
+          CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+          CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
+          CONFIG_PACKAGE_kmod-usb-wdm=y
+          CONFIG_PACKAGE_usb-modeswitch=y
+          CONFIG_PACKAGE_usbutils=y
+          EOF
+          make defconfig
+          grep -q '^CONFIG_TARGET_airoha_an7581_DEVICE_fiberhome_hg5585f-ct=y$' .config
+          for p in luci-app-openclash luci-app-ssr-plus qmodem luci-app-qmodem-next luci-app-airoha-npu kmod-usb-serial-option kmod-usb-net-qmi-wwan kmod-usb-net-cdc-mbim; do
+            grep -q "^CONFIG_PACKAGE_${p}=y$" .config || { echo "Required package missing after defconfig: ${p}"; exit 1; }
+          done
+          cp .config hg5585f-ct-enhanced.config
+          {
+            echo "PonWrt commit: $PONWRT_COMMIT"
+            echo "Target: Airoha AN7581 / FiberHome HG5585F CT"
+            echo "Profile: fiberhome_hg5585f-ct"
+            echo "Enhanced packages: OpenClash, SSR Plus+, QModem, Airoha NPU/CPU dashboard"
+            echo "USB modem support: serial-option, serial-wwan, QMI, MBIM, NCM, ECM, RNDIS"
+            echo "PLL overclock: disabled"
+          } > build-info.txt
+
+      - name: Download package sources
+        working-directory: ponwrt
+        run: make download -j8
+
+      - name: Compile HG5585F CT enhanced firmware
+        working-directory: ponwrt
+        run: make -j"$(nproc)" || make -j1 V=s
+
+      - name: Stamp firmware filenames
+        if: success()
+        working-directory: ponwrt
+        run: |
+          STAMP="$(date +'%Y%m%d-%H%M%S')"
+          echo "BUILD_STAMP=$STAMP" >> "$GITHUB_ENV"
+          echo "Build completed: $(date +'%Y-%m-%d %H:%M:%S %Z')" >> build-info.txt
+          find bin/targets/airoha/an7581 -type f \( -name '*.bin' -o -name '*.img' -o -name '*.itb' \) -print0 | while IFS= read -r -d '' f; do
+            ext="${f##*.}"
+            base="${f%.*}"
+            mv "$f" "${base}-${STAMP}.${ext}"
+          done
+
+      - name: Upload HG5585F CT enhanced firmware
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PonWrt-V3-HG5585F-CT-Enhanced-${{ env.BUILD_STAMP }}
+          path: |
+            ponwrt/bin/targets/airoha/an7581/
+            ponwrt/hg5585f-ct-enhanced.config
+            ponwrt/build-info.txt
+          if-no-files-found: warn
+          retention-days: 14
