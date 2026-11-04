@@ -94,18 +94,21 @@ jobs:
         working-directory: openwrt
         run: make download -j8
 
-      - name: Patch legacy LuCI CMake minimum version
+      - name: Prepare LuCI http package and patch CMake compatibility
         working-directory: openwrt
         run: |
+          # "make download" only fetches archives; it does not populate build_dir.
+          # Prepare the package first so its source tree exists before patching.
+          make package/feeds/luci/lucihttp/prepare V=s
           mapfile -t FILES < <(find build_dir -type f -path "*lucihttp*/CMakeLists.txt" -print)
           if [ "${#FILES[@]}" -eq 0 ]; then
-            echo "No extracted lucihttp CMakeLists.txt found under build_dir"
-            find build_dir -maxdepth 4 -iname "*lucihttp*" -print | head -n 50
+            echo "lucihttp CMakeLists.txt was not produced by the package prepare target"
+            find build_dir -type f -name CMakeLists.txt -print | grep -i lucihttp || true
             exit 1
           fi
           for FILE in "${FILES[@]}"; do
             sed -i -E "s/cmake_minimum_required\\(VERSION[[:space:]]+[0-9.]+/cmake_minimum_required(VERSION 3.5/" "$FILE"
-            head -n 3 "$FILE"
+            grep -n "cmake_minimum_required" "$FILE"
           done
 
       - name: Compile firmware
