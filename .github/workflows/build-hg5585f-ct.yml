@@ -1,0 +1,295 @@
+name: PonWrt HG5585F CT Enhanced Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: "Parallel build jobs (2 recommended)"
+        required: true
+        type: choice
+        options: ["2", "3", "4"]
+        default: "2"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-hg5585f-ct.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ponwrt-hg5585f-ct-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_REPO: https://github.com/pbs05/ponwrt.git
+  SOURCE_BRANCH: master
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    name: Build FiberHome HG5585F CT (AN7581)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Checkout build workflow
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ack antlr3 asciidoc autoconf automake autopoint \
+            binutils bison build-essential bzip2 ccache clang cmake cpio curl \
+            device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
+            g++-multilib git gnutls-dev gperf haveged help2man intltool \
+            lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm \
+            lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf \
+            python3 python3-pip python3-ply python3-docutils python3-pyelftools \
+            qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo \
+            uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd file
+
+      - name: Clone PonWrt and audit HG5585F CT hardware profile
+        run: |
+          git clone --depth=1 --branch "$SOURCE_BRANCH" "$SOURCE_REPO" ponwrt
+          cd ponwrt
+          echo "PONWRT_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+          IMAGE=target/linux/airoha/image/an7581.mk
+          DTS=target/linux/airoha/dts/an7581-fiberhome-hg5585f-ct-common.dtsi
+          KCFG=target/linux/airoha/an7581/config-6.18
+          test -f "$IMAGE"
+          test -f "$DTS"
+          grep -q '^TARGET_DEVICES += fiberhome_hg5585f-ct$' "$IMAGE"
+          grep -q '&npu {' "$DTS"
+          grep -q 'status = "okay";' "$DTS"
+          grep -q '^CONFIG_NET_AIROHA_NPU=y$' "$KCFG"
+          grep -q '^CONFIG_ARM_AIROHA_SOC_CPUFREQ=y$' "$KCFG"
+          grep -q '^CONFIG_DEFAULT_airoha-en7581-npu-firmware=y$' configs/an7581.config
+
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          {
+            echo "Source: $SOURCE_REPO"
+            echo "Source branch: $SOURCE_BRANCH"
+            echo "Source commit: $PONWRT_COMMIT"
+            echo "Target: Airoha AN7581 / FiberHome HG5585F CT"
+            echo "Profile: fiberhome_hg5585f-ct"
+            echo "CT DTS enables the AN7581 NPU node."
+            echo "Kernel config includes NET_AIROHA_NPU and Airoha CPUFreq."
+            echo "AN7581 config selects the NPU firmware package by default."
+          } > "$GITHUB_WORKSPACE/output/hardware-source-audit.txt"
+
+      - name: Add compatible package feeds
+        working-directory: ponwrt
+        run: |
+          cat >> feeds.conf.default <<'EOF'
+          src-git qmodem https://github.com/FUjr/QModem.git;main
+          src-git openclash https://github.com/vernesong/OpenClash.git;master
+          src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main
+          src-git passwall2 https://github.com/Openwrt-Passwall/openwrt-passwall2.git;main
+          src-git kenzo https://github.com/kenzok8/openwrt-packages.git;master
+          EOF
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+          # The selected package sources must exist before they are enabled.
+          test -f package/feeds/qmodem/qmodem/Makefile
+          test -f package/feeds/qmodem/luci-app-qmodem-next/Makefile
+          test -f package/feeds/qmodem/qfirehose/Makefile
+          test -f package/feeds/qmodem/qmodem-uplink-manager/Makefile
+          test -f package/feeds/openclash/luci-app-openclash/Makefile
+          test -f package/feeds/passwall2/luci-app-passwall2/Makefile
+          test -f package/feeds/kenzo/luci-app-filebrowser/Makefile
+          test -f package/feeds/kenzo/filebrowser/Makefile
+
+      - name: Add Design theme and Airoha NPU management page
+        working-directory: ponwrt
+        run: |
+          git clone --depth=1 --branch js https://github.com/0x676e67/luci-theme-design.git package/luci-theme-design
+          git clone --depth=1 https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
+          test -f package/luci-theme-design/Makefile
+          test -f package/luci-app-airoha-npu/Makefile
+          grep -q 'LUCI_TITLE:=Design Theme' package/luci-theme-design/Makefile
+          grep -q 'LUCI_DEPENDS:=+luci-base @TARGET_airoha' package/luci-app-airoha-npu/Makefile
+          test -f package/luci-app-airoha-npu/root/usr/share/luci/menu.d/luci-app-airoha-npu.json
+          test -f package/luci-app-airoha-npu/htdocs/luci-static/resources/view/airoha_npu/status.js
+
+      - name: Configure HG5585F CT and selected features
+        working-directory: ponwrt
+        run: |
+          set -eu
+          cp configs/an7581.config .config
+
+          # Build only the selected HG5585F CT profile, not every AN7581 device.
+          sed -i -E '/^CONFIG_TARGET_(DEVICE_)?airoha_an7581_DEVICE_.*=y$/s/=y$/=n/' .config
+          sed -i '/^CONFIG_TARGET_ALL_PROFILES=/d' .config
+          cat >> .config <<'EOF'
+          CONFIG_TARGET_airoha_an7581_DEVICE_fiberhome_hg5585f-ct=y
+          CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_fiberhome_hg5585f-ct=y
+
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-theme-design=y
+          CONFIG_PACKAGE_luci-app-airoha-npu=y
+
+          CONFIG_PACKAGE_luci-app-openclash=y
+          CONFIG_PACKAGE_luci-app-passwall2=y
+          CONFIG_PACKAGE_luci-app-mwan3=y
+          CONFIG_PACKAGE_mwan3=y
+
+          CONFIG_PACKAGE_qmodem=y
+          CONFIG_PACKAGE_luci-app-qmodem-next=y
+          CONFIG_PACKAGE_qmodem-smsd=y
+          CONFIG_PACKAGE_sms-forwarder-next=y
+          CONFIG_PACKAGE_qmodem-uplink-manager=y
+          CONFIG_PACKAGE_qfirehose=y
+          CONFIG_PACKAGE_qmodem_INCLUDE_ADD_QFIREHOSE_SUPPORT=y
+
+          CONFIG_PACKAGE_luci-app-nlbwmon=y
+          CONFIG_PACKAGE_nlbwmon=y
+          CONFIG_PACKAGE_luci-app-statistics=y
+          CONFIG_PACKAGE_luci-app-ttyd=y
+          CONFIG_PACKAGE_ttyd=y
+          CONFIG_PACKAGE_luci-app-filebrowser=y
+          CONFIG_PACKAGE_filebrowser=y
+          CONFIG_PACKAGE_luci-app-wol=y
+          CONFIG_PACKAGE_luci-app-ddns=y
+          CONFIG_PACKAGE_luci-app-adguardhome=y
+          CONFIG_PACKAGE_adguardhome=y
+          CONFIG_PACKAGE_netdata=y
+          CONFIG_PACKAGE_htop=y
+          CONFIG_PACKAGE_luci-app-attendedsysupgrade=y
+
+          CONFIG_PACKAGE_kmod-usb2=y
+          CONFIG_PACKAGE_kmod-usb3=y
+          CONFIG_PACKAGE_kmod-usb-serial=y
+          CONFIG_PACKAGE_kmod-usb-serial-option=y
+          CONFIG_PACKAGE_kmod-usb-serial-qualcomm=y
+          CONFIG_PACKAGE_kmod-usb-net=y
+          CONFIG_PACKAGE_kmod-usb-acm=y
+          CONFIG_PACKAGE_kmod-usb-wdm=y
+          CONFIG_PACKAGE_kmod-usb-net-cdc-ether=y
+          CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
+          CONFIG_PACKAGE_kmod-usb-net-rndis=y
+          CONFIG_PACKAGE_kmod-usb-net-cdc-ncm=y
+          CONFIG_PACKAGE_kmod-usb-net-qmi-wwan=y
+          CONFIG_PACKAGE_usb-modeswitch=y
+          CONFIG_PACKAGE_usbutils=y
+
+          CONFIG_PACKAGE_dnsmasq-full=y
+          CONFIG_PACKAGE_kmod-tun=y
+          CONFIG_PACKAGE_kmod-nft-tproxy=y
+          CONFIG_PACKAGE_kmod-nft-offload=y
+          CONFIG_PACKAGE_ipset=y
+          CONFIG_PACKAGE_ip-full=y
+          CONFIG_PACKAGE_bash=y
+          CONFIG_PACKAGE_curl=y
+          CONFIG_PACKAGE_unzip=y
+          CONFIG_PACKAGE_ruby=y
+          CONFIG_PACKAGE_ruby-yaml=y
+
+          CONFIG_PACKAGE_airoha-en7581-npu-firmware=y
+          CONFIG_KERNEL_DEBUG_FS=y
+          EOF
+
+          # Keep PLL overclock disabled: no devmem applet or /dev/mem build option.
+          sed -i '/^CONFIG_KERNEL_DEVMEM=/d; /^CONFIG_BUSYBOX_CONFIG_DEVMEM=/d' .config
+
+          make defconfig
+
+          grep -qx 'CONFIG_TARGET_airoha_an7581_DEVICE_fiberhome_hg5585f-ct=y' .config
+          grep -qx 'CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_fiberhome_hg5585f-ct=y' .config
+
+          # Mandatory feature packages must survive Kconfig dependency resolution.
+          required='luci-theme-design luci-app-airoha-npu luci-app-openclash luci-app-passwall2 qmodem luci-app-qmodem-next qfirehose qmodem-uplink-manager'
+          : > "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
+          for p in $required; do
+            if grep -qx "CONFIG_PACKAGE_${p}=y" .config; then
+              echo "ENABLED $p" | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
+            else
+              echo "MISSING_REQUIRED $p" | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
+              exit 1
+            fi
+          done
+
+          # Optional packages are reported individually; unavailable names are not
+          # silently represented as installed.
+          optional='luci-app-mwan3 mwan3 luci-app-nlbwmon luci-app-statistics luci-app-ttyd ttyd luci-app-filebrowser filebrowser luci-app-wol luci-app-ddns luci-app-adguardhome adguardhome netdata htop luci-app-attendedsysupgrade'
+          for p in $optional; do
+            if grep -qx "CONFIG_PACKAGE_${p}=y" .config; then
+              echo "ENABLED $p" | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
+            else
+              echo "NOT_SELECTED_OR_UNAVAILABLE $p" | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
+            fi
+          done
+
+          grep -qx 'CONFIG_PACKAGE_qmodem_INCLUDE_ADD_QFIREHOSE_SUPPORT=y' .config
+          grep -qx 'CONFIG_PACKAGE_airoha-en7581-npu-firmware=y' .config
+          grep -qx 'CONFIG_PACKAGE_kmod-nft-offload=y' .config
+          if grep -q '^CONFIG_KERNEL_DEVMEM=y$\|^CONFIG_BUSYBOX_CONFIG_DEVMEM=y$' .config; then
+            echo 'PLL/devmem unexpectedly enabled' >&2
+            exit 1
+          fi
+
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/99-luci-theme-design <<'EOF'
+          #!/bin/sh
+          uci -q set luci.main.mediaurlbase='/luci-static/design'
+          uci -q commit luci
+          exit 0
+          EOF
+          chmod 0755 files/etc/uci-defaults/99-luci-theme-design
+
+          cp .config "$GITHUB_WORKSPACE/output/hg5585f-ct-resolved.config"
+          {
+            echo "PonWrt commit: $PONWRT_COMMIT"
+            echo "Target: FiberHome HG5585F CT / AN7581"
+            echo "Theme: luci-theme-design (js branch)"
+            echo "Proxy: OpenClash + PassWall 2"
+            echo "QModem: SMS, modem status/control, QFirehose, USB 5G, uplink manager"
+            echo "System: nlbwmon, LuCI statistics, ttyd, FileBrowser, WoL, DDNS, AdGuard Home, Netdata"
+            echo "Hardware: AN7581 NPU, NPU firmware, nft flow offload, CPUFreq support"
+            echo "PLL overclock: disabled; devmem not enabled"
+            echo "Backup: standard LuCI backup/restore"
+            echo "Autoupdate UI: attended sysupgrade (requires a compatible build service)"
+          } > "$GITHUB_WORKSPACE/output/build-info.txt"
+
+      - name: Download sources
+        working-directory: ponwrt
+        run: make download -j8
+
+      - name: Compile HG5585F CT firmware
+        working-directory: ponwrt
+        env:
+          BUILD_JOBS: ${{ inputs.jobs || '2' }}
+        run: make -j"${BUILD_JOBS}" V=s
+
+      - name: Collect HG5585F CT firmware and audit reports
+        if: success()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/output/firmware"
+          find ponwrt/bin/targets/airoha/an7581 -maxdepth 1 -type f -exec cp -v {} "$GITHUB_WORKSPACE/output/firmware/" \;
+          test -n "$(find "$GITHUB_WORKSPACE/output/firmware" -maxdepth 1 -type f -iname '*hg5585f*' -print -quit)"
+          cp ponwrt/.config "$GITHUB_WORKSPACE/output/final-build.config"
+          cp ponwrt/feeds.conf.default "$GITHUB_WORKSPACE/output/feeds.conf.default"
+
+      - name: Upload HG5585F CT firmware artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PonWrt-HG5585F-CT-Enhanced-NPU
+          path: output/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PonWrt-HG5585F-CT-Build-Diagnostics
+          path: |
+            ponwrt/.config
+            ponwrt/logs/**
+            output/**
+          if-no-files-found: ignore
+          retention-days: 7
