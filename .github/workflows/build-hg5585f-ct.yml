@@ -90,11 +90,22 @@ jobs:
           # during make defconfig (a plain clone under package/ is not sufficient).
           mkdir -p "$GITHUB_WORKSPACE/local-feed"
           git clone --depth=1 --branch js https://github.com/0x676e67/luci-theme-design.git "$GITHUB_WORKSPACE/local-feed/luci-theme-design"
-          git clone --depth=1 https://github.com/rchen14b/luci-app-airoha-npu.git "$GITHUB_WORKSPACE/local-feed/luci-app-airoha-npu"
+          # The upstream NPU app repository contains a legacy nested package with
+          # a broken relative ../../luci.mk include. Stage only its root package.
+          git clone --depth=1 https://github.com/rchen14b/luci-app-airoha-npu.git "$GITHUB_WORKSPACE/npu-app-source"
+          mkdir -p "$GITHUB_WORKSPACE/local-feed/luci-app-airoha-npu"
+          cp "$GITHUB_WORKSPACE/npu-app-source/Makefile" "$GITHUB_WORKSPACE/npu-app-source/LICENSE" "$GITHUB_WORKSPACE/local-feed/luci-app-airoha-npu/"
+          cp -a "$GITHUB_WORKSPACE/npu-app-source/htdocs" "$GITHUB_WORKSPACE/npu-app-source/root" "$GITHUB_WORKSPACE/npu-app-source/po" "$GITHUB_WORKSPACE/local-feed/luci-app-airoha-npu/"
           echo "src-link custom $GITHUB_WORKSPACE/local-feed" >> feeds.conf.default
 
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          # Install only packages selected for this image. Installing every feed
+          # package pulled unrelated broken Kconfig entries (qt5/fwknop/squeezelite)
+          # and made make defconfig fail before compilation.
+          ./scripts/feeds install luci-app-openclash luci-app-nlbwmon luci-app-statistics
+          ./scripts/feeds install luci-theme-design luci-app-airoha-npu
+          ./scripts/feeds install qmodem luci-app-qmodem-next qfirehose
+          ./scripts/feeds install luci-app-passwall2
 
           # The selected package sources must exist before they are enabled.
           test -f package/feeds/luci/luci-app-openclash/Makefile
@@ -201,10 +212,157 @@ jobs:
           echo "SYSTEM_MONITOR_NOTE LuCI statistics is included; heavyweight Netdata is intentionally excluded." | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
           echo "BACKUP_NOTE configuration backup/restore is provided by the standard LuCI System backup page." | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
 
-          grep -qx 'CONFIG_PACKAGE_qmodem_INCLUDE_ADD_QFIREHOSE_SUPPORT=y' .config
-          grep -qx 'CONFIG_PACKAGE_airoha-en7581-npu-firmware=y' .config
-          grep -qx 'CONFIG_PACKAGE_kmod-nft-offload=y' .config
-          if grep -q '^CONFIG_KERNEL_DEVMEM=y$\|^CONFIG_BUSYBOX_CONFIG_DEVMEM=y$' .config; then
+          # NPU firmware is selected by the target's DEFAULT package symbol.
+          # QFirehose is validated as a package above; its internal build option
+          # is not a CONFIG_PACKAGE_* symbol and must not be grepped from .config.
+          grep -q '^CONFIG_DEFAULT_airoha-en7581-npu-firmware=y            echo 'PLL/devmem unexpectedly enabled' >&2
+            exit 1
+          fi
+
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/99-luci-theme-design <<'EOF'
+          #!/bin/sh
+          uci -q set luci.main.mediaurlbase='/luci-static/design'
+          uci -q commit luci
+          exit 0
+          EOF
+          chmod 0755 files/etc/uci-defaults/99-luci-theme-design
+
+          # Enable Linux software and hardware flow offload where the AN7581
+          # Ethernet/PPE driver advertises support. No CPU PLL overclocking.
+          cat > files/etc/uci-defaults/99-hg5585f-hardware-flow-offload <<'EOF'
+          #!/bin/sh
+          uci -q set firewall.@defaults[0].flow_offloading='1'
+          uci -q set firewall.@defaults[0].flow_offloading_hw='1'
+          uci -q commit firewall
+          exit 0
+          EOF
+          chmod 0755 files/etc/uci-defaults/99-hg5585f-hardware-flow-offload
+
+          cp .config "$GITHUB_WORKSPACE/output/hg5585f-ct-resolved.config"
+          {
+            echo "PonWrt commit: $PONWRT_COMMIT"
+            echo "Target: FiberHome HG5585F CT / AN7581"
+            echo "Theme: luci-theme-design (js branch)"
+            echo "Proxy: OpenClash + PassWall 2"
+            echo "QModem: SMS, modem status/control, QFirehose, USB 5G"
+            echo "System: traffic statistics (nlbwmon) and LuCI statistics"
+            echo "Hardware: AN7581 NPU, NPU firmware, nft flow offload, CPUFreq support"
+            echo "PLL overclock: disabled; devmem not enabled"
+            echo "Backup: standard LuCI backup/restore"
+          } > "$GITHUB_WORKSPACE/output/build-info.txt"
+
+      - name: Download sources
+        working-directory: ponwrt
+        run: make download -j8
+
+      - name: Compile HG5585F CT firmware
+        working-directory: ponwrt
+        env:
+          BUILD_JOBS: ${{ inputs.jobs || '2' }}
+        run: make -j"${BUILD_JOBS}" V=s
+
+      - name: Collect HG5585F CT firmware and audit reports
+        if: success()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/output/firmware"
+          find ponwrt/bin/targets/airoha/an7581 -maxdepth 1 -type f -exec cp -v {} "$GITHUB_WORKSPACE/output/firmware/" \;
+          test -n "$(find "$GITHUB_WORKSPACE/output/firmware" -maxdepth 1 -type f -iname '*hg5585f*' -print -quit)"
+          cp ponwrt/.config "$GITHUB_WORKSPACE/output/final-build.config"
+          cp ponwrt/feeds.conf.default "$GITHUB_WORKSPACE/output/feeds.conf.default"
+
+      - name: Upload HG5585F CT firmware artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PonWrt-HG5585F-CT-Minimal
+          path: output/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PonWrt-HG5585F-CT-Build-Diagnostics
+          path: |
+            ponwrt/.config
+            ponwrt/logs/**
+            output/**
+          if-no-files-found: ignore
+          retention-days: 7
+ configs/an7581.config
+          if grep -qx 'CONFIG_PACKAGE_kmod-nft-offload=y' .config; then
+            echo "HARDWARE_OFFLOAD_PACKAGE enabled" | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
+          else
+            echo "HARDWARE_OFFLOAD_NOTE nft offload package not separately selected; inspect target driver support" | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
+          fi
+          if grep -q '^CONFIG_KERNEL_DEVMEM=y$\|^CONFIG_BUSYBOX_CONFIG_DEVMEM=y            echo 'PLL/devmem unexpectedly enabled' >&2
+            exit 1
+          fi
+
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/99-luci-theme-design <<'EOF'
+          #!/bin/sh
+          uci -q set luci.main.mediaurlbase='/luci-static/design'
+          uci -q commit luci
+          exit 0
+          EOF
+          chmod 0755 files/etc/uci-defaults/99-luci-theme-design
+
+          cp .config "$GITHUB_WORKSPACE/output/hg5585f-ct-resolved.config"
+          {
+            echo "PonWrt commit: $PONWRT_COMMIT"
+            echo "Target: FiberHome HG5585F CT / AN7581"
+            echo "Theme: luci-theme-design (js branch)"
+            echo "Proxy: OpenClash + PassWall 2"
+            echo "QModem: SMS, modem status/control, QFirehose, USB 5G"
+            echo "System: traffic statistics (nlbwmon) and LuCI statistics"
+            echo "Hardware: AN7581 NPU, NPU firmware, nft flow offload, CPUFreq support"
+            echo "PLL overclock: disabled; devmem not enabled"
+            echo "Backup: standard LuCI backup/restore"
+          } > "$GITHUB_WORKSPACE/output/build-info.txt"
+
+      - name: Download sources
+        working-directory: ponwrt
+        run: make download -j8
+
+      - name: Compile HG5585F CT firmware
+        working-directory: ponwrt
+        env:
+          BUILD_JOBS: ${{ inputs.jobs || '2' }}
+        run: make -j"${BUILD_JOBS}" V=s
+
+      - name: Collect HG5585F CT firmware and audit reports
+        if: success()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/output/firmware"
+          find ponwrt/bin/targets/airoha/an7581 -maxdepth 1 -type f -exec cp -v {} "$GITHUB_WORKSPACE/output/firmware/" \;
+          test -n "$(find "$GITHUB_WORKSPACE/output/firmware" -maxdepth 1 -type f -iname '*hg5585f*' -print -quit)"
+          cp ponwrt/.config "$GITHUB_WORKSPACE/output/final-build.config"
+          cp ponwrt/feeds.conf.default "$GITHUB_WORKSPACE/output/feeds.conf.default"
+
+      - name: Upload HG5585F CT firmware artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PonWrt-HG5585F-CT-Minimal
+          path: output/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PonWrt-HG5585F-CT-Build-Diagnostics
+          path: |
+            ponwrt/.config
+            ponwrt/logs/**
+            output/**
+          if-no-files-found: ignore
+          retention-days: 7
+ .config; then
             echo 'PLL/devmem unexpectedly enabled' >&2
             exit 1
           fi
