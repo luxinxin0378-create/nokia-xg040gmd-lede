@@ -85,15 +85,24 @@ jobs:
         run: |
           cat >> feeds.conf.default <<'EOF'
           src-git qmodem https://github.com/FUjr/QModem.git;main
-          src-git openclash https://github.com/vernesong/OpenClash.git;master
           src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git;main
           src-git passwall2 https://github.com/Openwrt-Passwall/openwrt-passwall2.git;main
           src-git kenzo https://github.com/kenzok8/openwrt-packages.git;master
           EOF
+          # Put standalone LuCI packages in a local feed so Kconfig can see them
+          # during make defconfig (a plain clone under package/ is not sufficient).
+          mkdir -p "$GITHUB_WORKSPACE/local-feed"
+          git clone --depth=1 --branch js https://github.com/0x676e67/luci-theme-design.git "$GITHUB_WORKSPACE/local-feed/luci-theme-design"
+          git clone --depth=1 https://github.com/rchen14b/luci-app-airoha-npu.git "$GITHUB_WORKSPACE/local-feed/luci-app-airoha-npu"
+          echo "src-link custom $GITHUB_WORKSPACE/local-feed" >> feeds.conf.default
+
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
           # The selected package sources must exist before they are enabled.
+          test -f package/feeds/luci/luci-app-openclash/Makefile
+          test -f package/feeds/custom/luci-theme-design/Makefile
+          test -f package/feeds/custom/luci-app-airoha-npu/Makefile
           test -f package/feeds/qmodem/qmodem/Makefile
           test -f package/feeds/qmodem/luci-app-qmodem-next/Makefile
           test -f package/feeds/qmodem/qfirehose/Makefile
@@ -103,17 +112,13 @@ jobs:
           test -f package/feeds/kenzo/luci-app-filebrowser/Makefile
           test -f package/feeds/kenzo/filebrowser/Makefile
 
-      - name: Add Design theme and Airoha NPU management page
+      - name: Verify Design theme and Airoha NPU management page
         working-directory: ponwrt
         run: |
-          git clone --depth=1 --branch js https://github.com/0x676e67/luci-theme-design.git package/luci-theme-design
-          git clone --depth=1 https://github.com/rchen14b/luci-app-airoha-npu.git package/luci-app-airoha-npu
-          test -f package/luci-theme-design/Makefile
-          test -f package/luci-app-airoha-npu/Makefile
-          grep -q 'LUCI_TITLE:=Design Theme' package/luci-theme-design/Makefile
-          grep -q 'LUCI_DEPENDS:=+luci-base @TARGET_airoha' package/luci-app-airoha-npu/Makefile
-          test -f package/luci-app-airoha-npu/root/usr/share/luci/menu.d/luci-app-airoha-npu.json
-          test -f package/luci-app-airoha-npu/htdocs/luci-static/resources/view/airoha_npu/status.js
+          grep -q 'LUCI_TITLE:=Design Theme' package/feeds/custom/luci-theme-design/Makefile
+          grep -q 'LUCI_DEPENDS:=+luci-base @TARGET_airoha' package/feeds/custom/luci-app-airoha-npu/Makefile
+          test -f package/feeds/custom/luci-app-airoha-npu/root/usr/share/luci/menu.d/luci-app-airoha-npu.json
+          test -f package/feeds/custom/luci-app-airoha-npu/htdocs/luci-static/resources/view/airoha_npu/status.js
 
       - name: Configure HG5585F CT and selected features
         working-directory: ponwrt
@@ -214,6 +219,8 @@ jobs:
 
           # Optional packages are reported individually; unavailable names are not
           # silently represented as installed.
+          echo "SYSTEM_MONITOR_NOTE luci-app-sysmonitor was not found in the selected maintained feeds; luci-app-statistics + netdata are enabled as the supported monitoring replacement." | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
+          echo "BACKUP_NOTE configuration backup/restore is provided by the standard LuCI System backup page." | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
           optional='luci-app-mwan3 mwan3 luci-app-nlbwmon luci-app-statistics luci-app-ttyd ttyd luci-app-filebrowser filebrowser luci-app-wol luci-app-ddns luci-app-adguardhome adguardhome netdata htop luci-app-attendedsysupgrade'
           for p in $optional; do
             if grep -qx "CONFIG_PACKAGE_${p}=y" .config; then
