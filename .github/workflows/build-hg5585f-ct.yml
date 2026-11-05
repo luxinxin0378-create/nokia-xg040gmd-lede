@@ -28,7 +28,7 @@ env:
 
 jobs:
   build:
-    name: Build FiberHome HG5585F CT (AN7581)
+    name: Build FiberHome HG5585F CT (AN7581) - Minimal
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -103,7 +103,6 @@ jobs:
           test -f package/feeds/qmodem/qmodem/Makefile
           test -f package/feeds/qmodem/luci-app-qmodem-next/Makefile
           test -f package/feeds/qmodem/qfirehose/Makefile
-          test -f package/feeds/qmodem/qmodem-uplink-manager/Makefile
           test -f package/feeds/passwall2/luci-app-passwall2/Makefile
 
       - name: Verify Design theme and Airoha NPU management page
@@ -136,8 +135,8 @@ jobs:
 
           CONFIG_PACKAGE_qmodem=y
           CONFIG_PACKAGE_luci-app-qmodem-next=y
-          CONFIG_PACKAGE_qmodem-smsd=y
-          CONFIG_PACKAGE_sms-forwarder-next=y
+          CONFIG_PACKAGE_qmodem_smsd=y
+          CONFIG_PACKAGE_sms_forwarder_next=y
           CONFIG_PACKAGE_qfirehose=y
           CONFIG_PACKAGE_qmodem_INCLUDE_ADD_QFIREHOSE_SUPPORT=y
 
@@ -199,7 +198,7 @@ jobs:
 
           # Optional packages are reported individually; unavailable names are not
           # silently represented as installed.
-          echo "SYSTEM_MONITOR_NOTE luci-app-sysmonitor was not found in the selected maintained feeds; luci-app-statistics + netdata are enabled as the supported monitoring replacement." | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
+          echo "SYSTEM_MONITOR_NOTE LuCI statistics is included; heavyweight Netdata is intentionally excluded." | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
           echo "BACKUP_NOTE configuration backup/restore is provided by the standard LuCI System backup page." | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
 
           grep -qx 'CONFIG_PACKAGE_qmodem_INCLUDE_ADD_QFIREHOSE_SUPPORT=y' .config
@@ -255,7 +254,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: PonWrt-HG5585F-CT-Enhanced-NPU
+          name: PonWrt-HG5585F-CT-Minimal
           path: output/*
           if-no-files-found: error
           retention-days: 14
