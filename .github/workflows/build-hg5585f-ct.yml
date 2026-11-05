@@ -215,7 +215,14 @@ jobs:
           # NPU firmware is selected by the target's DEFAULT package symbol.
           # QFirehose is validated as a package above; its internal build option
           # is not a CONFIG_PACKAGE_* symbol and must not be grepped from .config.
-          grep -q '^CONFIG_DEFAULT_airoha-en7581-npu-firmware=y            echo 'PLL/devmem unexpectedly enabled' >&2
+          grep -q '^CONFIG_DEFAULT_airoha-en7581-npu-firmware=y$' configs/an7581.config
+          if grep -qx 'CONFIG_PACKAGE_kmod-nft-offload=y' .config; then
+            echo "HARDWARE_OFFLOAD_PACKAGE enabled" | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
+          else
+            echo "HARDWARE_OFFLOAD_NOTE nft offload package not separately selected; inspect target driver support" | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
+          fi
+          if grep -q '^CONFIG_KERNEL_DEVMEM=y$\|^CONFIG_BUSYBOX_CONFIG_DEVMEM=y$' .config; then
+            echo 'PLL/devmem unexpectedly enabled' >&2
             exit 1
           fi
 
@@ -238,143 +245,6 @@ jobs:
           exit 0
           EOF
           chmod 0755 files/etc/uci-defaults/99-hg5585f-hardware-flow-offload
-
-          cp .config "$GITHUB_WORKSPACE/output/hg5585f-ct-resolved.config"
-          {
-            echo "PonWrt commit: $PONWRT_COMMIT"
-            echo "Target: FiberHome HG5585F CT / AN7581"
-            echo "Theme: luci-theme-design (js branch)"
-            echo "Proxy: OpenClash + PassWall 2"
-            echo "QModem: SMS, modem status/control, QFirehose, USB 5G"
-            echo "System: traffic statistics (nlbwmon) and LuCI statistics"
-            echo "Hardware: AN7581 NPU, NPU firmware, nft flow offload, CPUFreq support"
-            echo "PLL overclock: disabled; devmem not enabled"
-            echo "Backup: standard LuCI backup/restore"
-          } > "$GITHUB_WORKSPACE/output/build-info.txt"
-
-      - name: Download sources
-        working-directory: ponwrt
-        run: make download -j8
-
-      - name: Compile HG5585F CT firmware
-        working-directory: ponwrt
-        env:
-          BUILD_JOBS: ${{ inputs.jobs || '2' }}
-        run: make -j"${BUILD_JOBS}" V=s
-
-      - name: Collect HG5585F CT firmware and audit reports
-        if: success()
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/output/firmware"
-          find ponwrt/bin/targets/airoha/an7581 -maxdepth 1 -type f -exec cp -v {} "$GITHUB_WORKSPACE/output/firmware/" \;
-          test -n "$(find "$GITHUB_WORKSPACE/output/firmware" -maxdepth 1 -type f -iname '*hg5585f*' -print -quit)"
-          cp ponwrt/.config "$GITHUB_WORKSPACE/output/final-build.config"
-          cp ponwrt/feeds.conf.default "$GITHUB_WORKSPACE/output/feeds.conf.default"
-
-      - name: Upload HG5585F CT firmware artifacts
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: PonWrt-HG5585F-CT-Minimal
-          path: output/*
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload build diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: PonWrt-HG5585F-CT-Build-Diagnostics
-          path: |
-            ponwrt/.config
-            ponwrt/logs/**
-            output/**
-          if-no-files-found: ignore
-          retention-days: 7
- configs/an7581.config
-          if grep -qx 'CONFIG_PACKAGE_kmod-nft-offload=y' .config; then
-            echo "HARDWARE_OFFLOAD_PACKAGE enabled" | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
-          else
-            echo "HARDWARE_OFFLOAD_NOTE nft offload package not separately selected; inspect target driver support" | tee -a "$GITHUB_WORKSPACE/output/package-resolution-audit.txt"
-          fi
-          if grep -q '^CONFIG_KERNEL_DEVMEM=y$\|^CONFIG_BUSYBOX_CONFIG_DEVMEM=y            echo 'PLL/devmem unexpectedly enabled' >&2
-            exit 1
-          fi
-
-          mkdir -p files/etc/uci-defaults
-          cat > files/etc/uci-defaults/99-luci-theme-design <<'EOF'
-          #!/bin/sh
-          uci -q set luci.main.mediaurlbase='/luci-static/design'
-          uci -q commit luci
-          exit 0
-          EOF
-          chmod 0755 files/etc/uci-defaults/99-luci-theme-design
-
-          cp .config "$GITHUB_WORKSPACE/output/hg5585f-ct-resolved.config"
-          {
-            echo "PonWrt commit: $PONWRT_COMMIT"
-            echo "Target: FiberHome HG5585F CT / AN7581"
-            echo "Theme: luci-theme-design (js branch)"
-            echo "Proxy: OpenClash + PassWall 2"
-            echo "QModem: SMS, modem status/control, QFirehose, USB 5G"
-            echo "System: traffic statistics (nlbwmon) and LuCI statistics"
-            echo "Hardware: AN7581 NPU, NPU firmware, nft flow offload, CPUFreq support"
-            echo "PLL overclock: disabled; devmem not enabled"
-            echo "Backup: standard LuCI backup/restore"
-          } > "$GITHUB_WORKSPACE/output/build-info.txt"
-
-      - name: Download sources
-        working-directory: ponwrt
-        run: make download -j8
-
-      - name: Compile HG5585F CT firmware
-        working-directory: ponwrt
-        env:
-          BUILD_JOBS: ${{ inputs.jobs || '2' }}
-        run: make -j"${BUILD_JOBS}" V=s
-
-      - name: Collect HG5585F CT firmware and audit reports
-        if: success()
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/output/firmware"
-          find ponwrt/bin/targets/airoha/an7581 -maxdepth 1 -type f -exec cp -v {} "$GITHUB_WORKSPACE/output/firmware/" \;
-          test -n "$(find "$GITHUB_WORKSPACE/output/firmware" -maxdepth 1 -type f -iname '*hg5585f*' -print -quit)"
-          cp ponwrt/.config "$GITHUB_WORKSPACE/output/final-build.config"
-          cp ponwrt/feeds.conf.default "$GITHUB_WORKSPACE/output/feeds.conf.default"
-
-      - name: Upload HG5585F CT firmware artifacts
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: PonWrt-HG5585F-CT-Minimal
-          path: output/*
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload build diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: PonWrt-HG5585F-CT-Build-Diagnostics
-          path: |
-            ponwrt/.config
-            ponwrt/logs/**
-            output/**
-          if-no-files-found: ignore
-          retention-days: 7
- .config; then
-            echo 'PLL/devmem unexpectedly enabled' >&2
-            exit 1
-          fi
-
-          mkdir -p files/etc/uci-defaults
-          cat > files/etc/uci-defaults/99-luci-theme-design <<'EOF'
-          #!/bin/sh
-          uci -q set luci.main.mediaurlbase='/luci-static/design'
-          uci -q commit luci
-          exit 0
-          EOF
-          chmod 0755 files/etc/uci-defaults/99-luci-theme-design
 
           cp .config "$GITHUB_WORKSPACE/output/hg5585f-ct-resolved.config"
           {
