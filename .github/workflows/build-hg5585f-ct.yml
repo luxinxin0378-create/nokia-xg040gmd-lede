@@ -135,7 +135,6 @@ jobs:
           sed -i '/^CONFIG_TARGET_ALL_PROFILES=/d' .config
           cat >> .config <<'EOF'
           CONFIG_TARGET_airoha_an7581_DEVICE_fiberhome_hg5585f-ct=y
-          CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_fiberhome_hg5585f-ct=y
 
           CONFIG_PACKAGE_luci=y
           CONFIG_PACKAGE_luci-theme-design=y
@@ -193,7 +192,6 @@ jobs:
           make defconfig
 
           grep -qx 'CONFIG_TARGET_airoha_an7581_DEVICE_fiberhome_hg5585f-ct=y' .config
-          grep -qx 'CONFIG_TARGET_DEVICE_airoha_an7581_DEVICE_fiberhome_hg5585f-ct=y' .config
 
           # Mandatory feature packages must survive Kconfig dependency resolution.
           required='luci-theme-design luci-app-airoha-npu luci-app-openclash luci-app-passwall2 qmodem luci-app-qmodem-next qfirehose'
